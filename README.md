@@ -44,7 +44,7 @@ pip install opencv-python numpy torch matplotlib
 
 ### Full Installation (including web demo)
 
-See [web_demo/README.md](web_demo/README.md) for complete installation instructions including the web interface.
+See [Affine Image Transformer](https://affine-image-transformer.up.railway.app/) for hosted web demo.
 
 ## Quick Start
 
@@ -195,7 +195,7 @@ See LICENSE file for details.
 
 ## Web Demo
 
-For an interactive web-based interface to this library, see the [web_demo](web_demo/) directory.
+For an interactive web-based interface to this library, see the [hosted Web Demo](https://affine-image-transformer.up.railway.app/).
 
 ## Contributing
 
