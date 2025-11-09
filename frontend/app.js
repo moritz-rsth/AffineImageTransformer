@@ -1145,25 +1145,40 @@ class App {
                 throw new Error('Please create at least one sector mapping');
             }
             
+            // Verify that image IDs exist
+            if (!this.mixupState.image1Id) {
+                throw new Error('No source image 1 ID found. Please upload the first image first.');
+            }
+            if (!this.mixupState.image2Id) {
+                throw new Error('No source image 2 ID found. Please upload the second image first.');
+            }
+            
             // Show loading on result canvas
             this.mixupState.resultCanvas.showLoading('Verifying images...');
             
+            console.log(`generateMixup: Verifying images ${this.mixupState.image1Id} and ${this.mixupState.image2Id} before mixup...`);
+            
             // Verify that both images exist on the server before proceeding
             const [image1Exists, image2Exists] = await Promise.all([
-                this.verifyImageWithRetry(this.mixupState.image1Id),
-                this.verifyImageWithRetry(this.mixupState.image2Id)
+                this.verifyImageWithRetry(this.mixupState.image1Id, 10, 2000),
+                this.verifyImageWithRetry(this.mixupState.image2Id, 10, 2000)
             ]);
             
             if (!image1Exists) {
-                throw new Error('Source image 1 not found on server. Please upload the image again.');
+                console.error(`generateMixup: Image 1 ${this.mixupState.image1Id} verification failed`);
+                throw new Error('Source image 1 not found on server after verification attempts. Please wait a moment and try again, or upload the image again.');
             }
             if (!image2Exists) {
-                throw new Error('Source image 2 not found on server. Please upload the image again.');
+                console.error(`generateMixup: Image 2 ${this.mixupState.image2Id} verification failed`);
+                throw new Error('Source image 2 not found on server after verification attempts. Please wait a moment and try again, or upload the image again.');
             }
+            
+            console.log(`generateMixup: Both images verified successfully`);
             
             // Update loading message
             this.mixupState.resultCanvas.showLoading('Generating result...');
             
+            console.log(`generateMixup: Calling mixup API for images ${this.mixupState.image1Id} and ${this.mixupState.image2Id}...`);
             const result = await this.apiClient.mixupImages(
                 this.mixupState.image1Id,
                 this.mixupState.image2Id,
@@ -1173,6 +1188,8 @@ class App {
                 false,
                 this.mixupState.alpha
             );
+            
+            console.log('generateMixup: Mixup API call successful');
             
             const resultWidth = this.mixupState.image1Data ? this.mixupState.image1Data.width : null;
             const resultHeight = this.mixupState.image1Data ? this.mixupState.image1Data.height : null;
@@ -1189,7 +1206,15 @@ class App {
         } catch (error) {
             // Hide loading on error
             this.mixupState.resultCanvas.hideLoading();
-            this.showError(error.message);
+            
+            // Provide more detailed error message
+            let errorMessage = error.message;
+            if (error.message && error.message.includes('not found')) {
+                errorMessage = `${error.message} Please wait a moment and try again, or upload the image again.`;
+            }
+            
+            console.error('generateMixup error:', error);
+            this.showError(errorMessage);
         }
     }
 
