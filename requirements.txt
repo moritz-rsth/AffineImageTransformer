@@ -1,3 +1,7 @@
+# Core dependencies for the Affine Image Transformer library
+# These are the minimum requirements for using the image_transformation_util.py
+
 opencv-python
-matplot
+numpy
 torch
+matplotlib

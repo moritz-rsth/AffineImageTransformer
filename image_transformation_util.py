@@ -822,9 +822,6 @@ class ImageSectorTransformer:
         assert len(src_triangles) == len(dst_triangles), \
             "Source and destination must have the same number of triangles"
 
-        if debug:
-            print(f"src_triangles: {src_triangles}")
-            print(f"dst_triangles: {dst_triangles}")
         
         # Create output image (black background)
         result = np.zeros_like(image)
