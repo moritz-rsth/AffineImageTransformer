@@ -8,7 +8,7 @@ PORT = int(os.getenv('PORT', os.getenv('FLASK_PORT', '5001')))
 
 # Image processing configuration
 JPEG_QUALITY = 95
-MAX_FILE_SIZE = 1024 * 2048  # 10MB - reduced for better performance
+MAX_FILE_SIZE = 2048 * 4096  # 10MB - reduced for better performance
 MAX_IMAGES_STORED = 10  # Maximum number of images to store in memory
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'bmp'}
 MAX_IMAGE_DIMENSION = 2048  # Maximum width or height in pixels
