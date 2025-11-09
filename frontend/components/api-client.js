@@ -69,13 +69,24 @@ class APIClient {
     }
 
     async verifyImage(imageId) {
-        const response = await fetch(`${this.baseURL}/api/verify-image/${imageId}`);
-        
-        if (!response.ok) {
+        try {
+            if (!imageId) {
+                return { exists: false };
+            }
+            
+            const response = await fetch(`${this.baseURL}/api/verify-image/${encodeURIComponent(imageId)}`);
+            
+            if (!response.ok) {
+                console.error(`verifyImage: Response not OK for image ${imageId}: ${response.status} ${response.statusText}`);
+                return { exists: false };
+            }
+            
+            const result = await response.json();
+            return result;
+        } catch (error) {
+            console.error(`verifyImage: Error verifying image ${imageId}:`, error);
             return { exists: false };
         }
-        
-        return await response.json();
     }
 
     async healthCheck() {

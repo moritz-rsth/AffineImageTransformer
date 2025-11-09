@@ -637,24 +637,34 @@ class App {
      * @returns {Promise<boolean>} - True if image exists, false otherwise
      */
     async verifyImageWithRetry(imageId, maxRetries = 10, retryDelay = 2000) {
+        if (!imageId) {
+            console.error('verifyImageWithRetry: imageId is null or undefined');
+            return false;
+        }
+        
         for (let i = 0; i < maxRetries; i++) {
             try {
                 const verification = await this.apiClient.verifyImage(imageId);
-                if (verification.exists) {
+                if (verification && verification.exists) {
+                    console.log(`verifyImageWithRetry: Image ${imageId} verified successfully on attempt ${i + 1}`);
                     return true;
                 }
+                
+                console.log(`verifyImageWithRetry: Image ${imageId} not found on attempt ${i + 1}/${maxRetries}`);
                 
                 // If not found and not last retry, wait before retrying
                 if (i < maxRetries - 1) {
                     await new Promise(resolve => setTimeout(resolve, retryDelay));
                 }
             } catch (error) {
+                console.error(`verifyImageWithRetry: Error on attempt ${i + 1}:`, error);
                 // If error and not last retry, wait before retrying
                 if (i < maxRetries - 1) {
                     await new Promise(resolve => setTimeout(resolve, retryDelay));
                 }
             }
         }
+        console.error(`verifyImageWithRetry: Image ${imageId} not found after ${maxRetries} attempts`);
         return false;
     }
     
@@ -680,20 +690,32 @@ class App {
             this.warpingState.resultCanvas.showLoading('Verifying image...');
             
             // Verify that the source image exists on the server before proceeding
-            const imageExists = await this.verifyImageWithRetry(this.warpingState.sourceImageId);
-            if (!imageExists) {
-                throw new Error('Source image not found on server. Please upload the image again.');
+            if (!this.warpingState.sourceImageId) {
+                throw new Error('No source image ID found. Please upload an image first.');
             }
+            
+            console.log(`applyWarp: Verifying image ${this.warpingState.sourceImageId} before warp...`);
+            const imageExists = await this.verifyImageWithRetry(this.warpingState.sourceImageId, 10, 2000);
+            
+            if (!imageExists) {
+                console.error(`applyWarp: Image ${this.warpingState.sourceImageId} verification failed`);
+                throw new Error('Source image not found on server after verification attempts. Please wait a moment and try again, or upload the image again.');
+            }
+            
+            console.log(`applyWarp: Image ${this.warpingState.sourceImageId} verified successfully`);
             
             // Update loading message
             this.warpingState.resultCanvas.showLoading('Generating result...');
             
+            console.log(`applyWarp: Calling warp API for image ${this.warpingState.sourceImageId}...`);
             const result = await this.apiClient.warpImage(
                 this.warpingState.sourceImageId,
                 sourceSectors,
                 targetSectors,
                 this.warpingState.debugMode
             );
+            
+            console.log('applyWarp: Warp API call successful');
             
             // Update loading message
             this.warpingState.resultCanvas.showLoading('Loading result...');
@@ -711,7 +733,15 @@ class App {
         } catch (error) {
             // Hide loading on error
             this.warpingState.resultCanvas.hideLoading();
-            this.showError(error.message);
+            
+            // Provide more detailed error message
+            let errorMessage = error.message;
+            if (error.message && error.message.includes('not found')) {
+                errorMessage = `${error.message} Please wait a moment and try again, or upload the image again.`;
+            }
+            
+            console.error('applyWarp error:', error);
+            this.showError(errorMessage);
         }
     }
 

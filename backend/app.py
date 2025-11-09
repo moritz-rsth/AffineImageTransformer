@@ -82,6 +82,7 @@ def get_image(image_id: str) -> Optional[np.ndarray]:
     """Get image from store and update access time."""
     if image_id not in image_store:
         return None
+    # Update access time to prevent cleanup of recently accessed images
     image_store_access_times[image_id] = time.time()
     return image_store[image_id]
 
@@ -183,12 +184,19 @@ def upload_image():
         if not validate_image_dimensions(width, height):
             return error_response(f'Invalid image dimensions. Maximum: {MAX_IMAGE_DIMENSION}x{MAX_IMAGE_DIMENSION} pixels', HTTP_BAD_REQUEST)
         
-        # Cleanup old images before adding new one
+        # Generate image ID first
+        image_id = str(uuid.uuid4())
+        
+        # Cleanup old images before adding new one (but exclude the one we're about to add)
         cleanup_old_images()
         
-        image_id = str(uuid.uuid4())
+        # Store the new image with current timestamp
         image_store[image_id] = image_bgr
         image_store_access_times[image_id] = time.time()
+        
+        # Verify the image was stored correctly
+        if image_id not in image_store:
+            return error_response('Failed to store image', HTTP_INTERNAL_SERVER_ERROR)
         
         return jsonify({
             'image_id': image_id,
@@ -204,14 +212,18 @@ def upload_image():
 def verify_image(image_id: str):
     """Verify if an image exists in the store."""
     try:
-        if not image_id or not isinstance(image_id, str):
+        if not image_id:
             return error_response('Invalid image_id', HTTP_BAD_REQUEST)
         
-        image = get_image(image_id)
-        if image is None:
+        # Check if image exists in store
+        if image_id not in image_store:
             return jsonify({'exists': False}), 200
         
+        # Update access time and get image dimensions
+        image_store_access_times[image_id] = time.time()
+        image = image_store[image_id]
         height, width = image.shape[:2]
+        
         return jsonify({
             'exists': True,
             'width': width,
