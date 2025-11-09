@@ -10,6 +10,27 @@ class CanvasController {
         this.scale = 1;
         this.offsetX = 0;
         this.offsetY = 0;
+        
+        // Set initial empty canvas size after layout is ready
+        // Use multiple attempts to ensure wrapper has proper dimensions
+        const initEmptyCanvas = () => {
+            if (!this.image && this.canvas.parentElement) {
+                const wrapper = this.canvas.parentElement;
+                if (wrapper.clientWidth > 0) {
+                    this.setEmptyCanvasSize();
+                    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+                    this.ctx.fillStyle = '#fafafa';
+                    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                } else {
+                    // Retry if wrapper not ready yet
+                    requestAnimationFrame(initEmptyCanvas);
+                }
+            }
+        };
+        
+        // Try immediately, then after next frame, then after a short delay
+        requestAnimationFrame(initEmptyCanvas);
+        setTimeout(initEmptyCanvas, 100);
     }
 
     /**
@@ -27,27 +48,10 @@ class CanvasController {
                 this.imageData = { width, height };
                 
                 requestAnimationFrame(() => {
-                    const container = this.canvas.parentElement;
-                    if (!container) {
-                        reject(new Error('Canvas has no parent container'));
-                        return;
-                    }
+                    // Calculate and set canvas dimensions
+                    this.recalculateDimensions();
                     
-                    const containerDims = getContainerDimensions(container);
-                    const dims = calculateCanvasDimensions(
-                        containerDims.width,
-                        containerDims.height,
-                        width,
-                        height,
-                        CANVAS_PADDING
-                    );
-                    
-                    this.scale = dims.scale;
-                    this.canvas.width = dims.canvasWidth;
-                    this.canvas.height = dims.canvasHeight;
-                    this.offsetX = dims.offsetX;
-                    this.offsetY = dims.offsetY;
-                    
+                    // Draw the image
                     this.draw();
                     resolve();
                 });
@@ -69,47 +73,124 @@ class CanvasController {
         this.offsetX = 0;
         this.offsetY = 0;
         
-        this.canvas.width = DEFAULT_CANVAS_WIDTH;
-        this.canvas.height = DEFAULT_CANVAS_HEIGHT;
+        // Calculate empty canvas size based on wrapper width to fill the row
+        this.setEmptyCanvasSize();
         
+        // Fill with background color
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
         this.ctx.fillStyle = '#fafafa';
         this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
     }
 
     /**
-     * Draw image scaled to fit container with constant padding.
+     * Set empty canvas size based on wrapper width to fill the row.
+     */
+    setEmptyCanvasSize() {
+        const wrapper = this.canvas.parentElement;
+        if (!wrapper) {
+            // Fallback to default size if no wrapper
+            const defaultWidth = DEFAULT_EMPTY_CANVAS_HEIGHT * DEFAULT_CANVAS_ASPECT_RATIO;
+            this.canvas.width = defaultWidth + (CANVAS_PADDING * 2);
+            this.canvas.height = DEFAULT_EMPTY_CANVAS_HEIGHT + (CANVAS_PADDING * 2);
+            return;
+        }
+        
+        // Get wrapper width - try multiple methods to get accurate width
+        let wrapperWidth = wrapper.clientWidth;
+        if (wrapperWidth === 0) {
+            wrapperWidth = wrapper.offsetWidth;
+        }
+        if (wrapperWidth === 0) {
+            // Try getting from container if wrapper not ready
+            const container = wrapper.parentElement;
+            if (container) {
+                // Estimate: divide container width by number of wrappers (typically 3)
+                const containerWidth = container.clientWidth || container.offsetWidth;
+                if (containerWidth > 0) {
+                    // Approximate wrapper width: (container - gaps - padding) / 3
+                    // Gap is 20px between wrappers, so 2 gaps for 3 wrappers = 40px
+                    // Container might have padding too, estimate 40px total overhead
+                    const estimatedWrapperWidth = (containerWidth - 40) / 3;
+                    wrapperWidth = Math.max(200, estimatedWrapperWidth);
+                }
+            }
+        }
+        
+        // If still no width, use a reasonable default and retry
+        if (wrapperWidth < 50) {
+            // Use a fallback width for calculation
+            wrapperWidth = 400; // Reasonable default for desktop
+            // Still set the canvas so it's visible, but maybe retry later
+            setTimeout(() => {
+                if (!this.image && wrapper.clientWidth > 0) {
+                    this.setEmptyCanvasSize();
+                }
+            }, 200);
+        }
+        
+        // Calculate available width (wrapper width minus wrapper padding)
+        // Wrapper has 15px padding on each side = 30px total
+        const availableWidth = wrapperWidth - 30;
+        
+        // Use most of available width (98%) to fill the row nicely
+        const contentWidth = availableWidth * 0.98;
+        
+        // Calculate canvas content width (content width minus canvas padding)
+        const canvasContentWidth = Math.max(150, contentWidth - (CANVAS_PADDING * 2));
+        
+        // Calculate canvas height based on aspect ratio
+        const canvasContentHeight = canvasContentWidth / DEFAULT_CANVAS_ASPECT_RATIO;
+        
+        // Set canvas dimensions (including padding)
+        this.canvas.width = canvasContentWidth + (CANVAS_PADDING * 2);
+        this.canvas.height = canvasContentHeight + (CANVAS_PADDING * 2);
+    }
+
+    /**
+     * Recalculate canvas dimensions (call this when window resizes or container changes).
+     * Canvas bounds itself, wrapper shrinks to fit canvas.
+     */
+    recalculateDimensions() {
+        if (!this.image || !this.imageData) return;
+        
+        // Get wrapper width to use as constraint for canvas sizing
+        const wrapper = this.canvas.parentElement;
+        const wrapperWidth = wrapper ? wrapper.clientWidth : null;
+        
+        // Calculate canvas dimensions based on image size with max constraints
+        const dims = calculateCanvasDimensions(
+            this.imageData.width,
+            this.imageData.height,
+            CANVAS_PADDING,
+            wrapperWidth
+        );
+        
+        this.scale = dims.scale;
+        this.canvas.width = dims.canvasWidth;
+        this.canvas.height = dims.canvasHeight;
+        this.offsetX = dims.offsetX;
+        this.offsetY = dims.offsetY;
+    }
+
+    /**
+     * Draw image at current canvas dimensions.
+     * Does NOT resize the canvas - only redraws content.
      */
     draw() {
         if (!this.image || !this.imageData) return;
         
-        const container = this.canvas.parentElement;
-        const containerDims = getContainerDimensions(container);
-        const dims = calculateCanvasDimensions(
-            containerDims.width,
-            containerDims.height,
-            this.imageData.width,
-            this.imageData.height,
-            CANVAS_PADDING
-        );
-        
-        this.scale = dims.scale;
-        
-        if (this.canvas.width !== dims.canvasWidth || this.canvas.height !== dims.canvasHeight) {
-            this.canvas.width = dims.canvasWidth;
-            this.canvas.height = dims.canvasHeight;
-        }
-        
-        this.offsetX = dims.offsetX;
-        this.offsetY = dims.offsetY;
+        // Don't recalculate dimensions here - only redraw
+        // Canvas dimensions should only change on load or explicit resize
+        const scaledWidth = this.imageData.width * this.scale;
+        const scaledHeight = this.imageData.height * this.scale;
         
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
         this.ctx.drawImage(
             this.image,
             this.offsetX,
             this.offsetY,
-            dims.scaledWidth,
-            dims.scaledHeight
+            scaledWidth,
+            scaledHeight
         );
     }
 
@@ -370,29 +451,20 @@ class CanvasController {
                 this.imageData = { width: resultWidth, height: resultHeight };
                 
                 requestAnimationFrame(() => {
-                    const container = this.canvas.parentElement;
-                    if (!container) {
+                    const wrapper = this.canvas.parentElement;
+                    if (!wrapper) {
                         reject(new Error('Canvas has no parent container'));
                         return;
                     }
                     
-                    const containerDims = getContainerDimensions(container);
-                    const dims = calculateCanvasDimensions(
-                        containerDims.width,
-                        containerDims.height,
-                        resultWidth,
-                        resultHeight,
-                        CANVAS_PADDING
-                    );
+                    // Calculate and set canvas dimensions
+                    this.recalculateDimensions();
                     
-                    this.scale = dims.scale;
-                    this.canvas.width = dims.canvasWidth;
-                    this.canvas.height = dims.canvasHeight;
-                    this.offsetX = dims.offsetX;
-                    this.offsetY = dims.offsetY;
-                    
+                    // Draw the result image
+                    const scaledWidth = resultWidth * this.scale;
+                    const scaledHeight = resultHeight * this.scale;
                     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-                    this.ctx.drawImage(img, this.offsetX, this.offsetY, dims.scaledWidth, dims.scaledHeight);
+                    this.ctx.drawImage(img, this.offsetX, this.offsetY, scaledWidth, scaledHeight);
                     resolve();
                 });
             };

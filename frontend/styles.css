@@ -194,12 +194,16 @@ header h1 {
 }
 
 .canvas-wrapper {
-    flex: 1;
-    min-width: var(--canvas-min-width);
+    flex: 1 1 0;
+    min-width: 0;
+    max-width: 100%;
     background: var(--color-surface);
     padding: var(--spacing-md);
     border-radius: var(--radius-md);
     box-shadow: var(--shadow-sm);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
 }
 
 .canvas-wrapper h3 {
@@ -212,14 +216,16 @@ header h1 {
 }
 
 canvas {
-    width: 100%;
+    width: auto;
     height: auto;
+    max-width: 100%;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
     cursor: crosshair;
     display: block;
     background: var(--color-surface-light);
-    max-width: 100%;
+    margin: 0 auto;
+    flex-shrink: 0;
 }
 
 .sector-mapping-container {
@@ -363,6 +369,11 @@ label {
 @media (max-width: 768px) {
     .canvas-container {
         flex-direction: column;
+    }
+    
+    .canvas-wrapper {
+        flex: 1 1 auto;
+        width: 100%;
     }
     
     .control-group {

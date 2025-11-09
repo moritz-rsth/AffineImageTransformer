@@ -25,9 +25,11 @@ const DEFAULT_HIGHLIGHT_OPACITY = 0.5;
 
 // Canvas Configuration
 const CANVAS_PADDING = 20;
-const DEFAULT_CANVAS_WIDTH = 300;
-const DEFAULT_CANVAS_HEIGHT = 150;
+const DEFAULT_CANVAS_ASPECT_RATIO = 16 / 9;  // Default aspect ratio for empty canvas
+const DEFAULT_EMPTY_CANVAS_HEIGHT = 300;  // Default height for empty canvas
 const FALLBACK_CONTAINER_SIZE = 400;
+const MAX_CANVAS_WIDTH = 1200;  // Maximum canvas width in pixels
+const MAX_CANVAS_HEIGHT = 800;  // Maximum canvas height in pixels
 
 // Interaction Configuration
 const DRAG_THRESHOLD = 20;

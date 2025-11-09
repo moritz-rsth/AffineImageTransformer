@@ -56,28 +56,67 @@ function getContainerDimensions(container) {
 }
 
 /**
- * Calculate canvas dimensions based on container and image size with padding.
- * @param {number} containerWidth - Container width
- * @param {number} containerHeight - Container height
+ * Calculate canvas dimensions based on image size with maximum constraints.
+ * Canvas bounds itself, wrapper will shrink to fit.
  * @param {number} imageWidth - Image width
  * @param {number} imageHeight - Image height
  * @param {number} padding - Padding around image
- * @returns {{canvasWidth: number, canvasHeight: number, scale: number, offsetX: number, offsetY: number}} - Canvas dimensions and layout
+ * @param {number} containerWidth - Optional container width to respect (for side-by-side layouts)
+ * @param {number} maxWidth - Maximum canvas width (optional, uses MAX_CANVAS_WIDTH if not provided)
+ * @param {number} maxHeight - Maximum canvas height (optional, uses MAX_CANVAS_HEIGHT if not provided)
+ * @returns {{canvasWidth: number, canvasHeight: number, scale: number, offsetX: number, offsetY: number, scaledWidth: number, scaledHeight: number}} - Canvas dimensions and layout
  */
-function calculateCanvasDimensions(containerWidth, containerHeight, imageWidth, imageHeight, padding) {
-    const availableWidth = containerWidth - (padding * 2);
-    const availableHeight = containerHeight - (padding * 2);
+function calculateCanvasDimensions(imageWidth, imageHeight, padding, containerWidth = null, maxWidth = MAX_CANVAS_WIDTH, maxHeight = MAX_CANVAS_HEIGHT) {
+    // Determine the effective maximum width
+    // Canvas bounds itself - use container width as constraint if provided (for side-by-side layouts)
+    // Otherwise use absolute maximum
+    let effectiveMaxWidth = maxWidth;
     
-    const scaleX = availableWidth / imageWidth;
-    const scaleY = availableHeight / imageHeight;
-    const scale = Math.min(scaleX, scaleY, 1);
+    if (containerWidth !== null && containerWidth > 0) {
+        // Account for wrapper padding (15px on each side = 30px total)
+        // Also account for gap between wrappers (20px) when calculating per-wrapper space
+        // On desktop with 3 wrappers: (containerWidth - gaps - padding) / 3 would be ideal,
+        // but we use the actual wrapper width which flexbox handles for us
+        const availableWidth = containerWidth - 30; // Wrapper padding
+        // Use the smaller of: container width or absolute maximum
+        // Ensure minimum width for very small containers
+        effectiveMaxWidth = Math.min(maxWidth, Math.max(200, availableWidth));
+    }
     
+    // Calculate maximum available space for image (excluding padding)
+    const maxAvailableWidth = effectiveMaxWidth - (padding * 2);
+    const maxAvailableHeight = maxHeight - (padding * 2);
+    
+    // Ensure we have positive dimensions
+    if (maxAvailableWidth <= 0 || maxAvailableHeight <= 0) {
+        // Fallback to minimal size
+        return {
+            canvasWidth: padding * 2,
+            canvasHeight: padding * 2,
+            scale: 0,
+            offsetX: padding,
+            offsetY: padding,
+            scaledWidth: 0,
+            scaledHeight: 0
+        };
+    }
+    
+    // Calculate scale to fit within maximum dimensions (scale down if needed, but don't scale up)
+    const scaleX = maxAvailableWidth / imageWidth;
+    const scaleY = maxAvailableHeight / imageHeight;
+    const scale = Math.min(scaleX, scaleY, 1);  // Never scale up (max scale = 1)
+    
+    // Calculate actual scaled dimensions
     const scaledWidth = imageWidth * scale;
     const scaledHeight = imageHeight * scale;
     
+    // Canvas size includes padding
+    const canvasWidth = scaledWidth + (padding * 2);
+    const canvasHeight = scaledHeight + (padding * 2);
+    
     return {
-        canvasWidth: scaledWidth + (padding * 2),
-        canvasHeight: scaledHeight + (padding * 2),
+        canvasWidth: canvasWidth,
+        canvasHeight: canvasHeight,
         scale: scale,
         offsetX: padding,
         offsetY: padding,

@@ -2,6 +2,7 @@ import os
 import sys
 import uuid
 import base64
+import time
 import cv2
 import numpy as np
 from flask import Flask, request, jsonify, send_from_directory
@@ -14,7 +15,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from image_transformation_util import LinearBoundedSector, ImageSectorTransformer
 from config import (
     HOST, PORT, JPEG_QUALITY, MAX_FILE_SIZE, ALLOWED_EXTENSIONS,
-    DEFAULT_ALPHA, HTTP_BAD_REQUEST, HTTP_NOT_FOUND, HTTP_INTERNAL_SERVER_ERROR
+    DEFAULT_ALPHA, HTTP_BAD_REQUEST, HTTP_NOT_FOUND, HTTP_INTERNAL_SERVER_ERROR,
+    MAX_IMAGES_STORED, MAX_IMAGE_DIMENSION
 )
 
 app = Flask(__name__, static_folder=None)
@@ -23,6 +25,7 @@ CORS(app)
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'frontend')
 
 image_store: Dict[str, np.ndarray] = {}
+image_store_access_times: Dict[str, float] = {}  # Track last access time for cleanup
 
 def allowed_file(filename: str) -> bool:
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -54,7 +57,33 @@ def decode_image_base64(image_base64: str) -> np.ndarray:
 
 def validate_image_dimensions(width: int, height: int) -> bool:
     """Validate that image dimensions are valid."""
-    return width > 0 and height > 0
+    if width <= 0 or height <= 0:
+        return False
+    if width > MAX_IMAGE_DIMENSION or height > MAX_IMAGE_DIMENSION:
+        return False
+    return True
+
+def cleanup_old_images():
+    """Remove oldest images if we exceed the storage limit."""
+    if len(image_store) <= MAX_IMAGES_STORED:
+        return
+    
+    # Sort by access time and remove oldest
+    sorted_images = sorted(image_store_access_times.items(), key=lambda x: x[1])
+    images_to_remove = len(image_store) - MAX_IMAGES_STORED
+    
+    for image_id, _ in sorted_images[:images_to_remove]:
+        if image_id in image_store:
+            del image_store[image_id]
+        if image_id in image_store_access_times:
+            del image_store_access_times[image_id]
+
+def get_image(image_id: str) -> Optional[np.ndarray]:
+    """Get image from store and update access time."""
+    if image_id not in image_store:
+        return None
+    image_store_access_times[image_id] = time.time()
+    return image_store[image_id]
 
 def validate_point(x: float, y: float, name: str, width: int, height: int) -> Tuple[int, int]:
     """Validate that a point is within image bounds."""
@@ -126,24 +155,40 @@ def upload_image():
             return error_response('No file selected', HTTP_BAD_REQUEST)
         
         if not allowed_file(file.filename):
-            return error_response('Invalid file type', HTTP_BAD_REQUEST)
+            return error_response(f'Invalid file type. Allowed: {", ".join(ALLOWED_EXTENSIONS)}', HTTP_BAD_REQUEST)
+        
+        # Check file size before reading
+        file.seek(0, os.SEEK_END)
+        file_size = file.tell()
+        file.seek(0)
+        
+        if file_size > MAX_FILE_SIZE:
+            max_mb = MAX_FILE_SIZE / (1024 * 1024)
+            return error_response(f'File too large. Maximum size: {max_mb:.1f}MB', HTTP_BAD_REQUEST)
+        
+        if file_size == 0:
+            return error_response('File is empty', HTTP_BAD_REQUEST)
         
         file_bytes = file.read()
-        if len(file_bytes) > MAX_FILE_SIZE:
-            return error_response('File too large', HTTP_BAD_REQUEST)
+        if len(file_bytes) != file_size:
+            return error_response('Failed to read file completely', HTTP_BAD_REQUEST)
         
         nparr = np.frombuffer(file_bytes, np.uint8)
         image_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         if image_bgr is None:
-            return error_response('Failed to decode image', HTTP_BAD_REQUEST)
-        
-        image_id = str(uuid.uuid4())
-        image_store[image_id] = image_bgr
+            return error_response('Failed to decode image. Please ensure the file is a valid image.', HTTP_BAD_REQUEST)
         
         height, width = image_bgr.shape[:2]
         
         if not validate_image_dimensions(width, height):
-            return error_response('Invalid image dimensions', HTTP_BAD_REQUEST)
+            return error_response(f'Invalid image dimensions. Maximum: {MAX_IMAGE_DIMENSION}x{MAX_IMAGE_DIMENSION} pixels', HTTP_BAD_REQUEST)
+        
+        # Cleanup old images before adding new one
+        cleanup_old_images()
+        
+        image_id = str(uuid.uuid4())
+        image_store[image_id] = image_bgr
+        image_store_access_times[image_id] = time.time()
         
         return jsonify({
             'image_id': image_id,
@@ -153,7 +198,7 @@ def upload_image():
         })
     
     except Exception as e:
-        return error_response(str(e), HTTP_INTERNAL_SERVER_ERROR)
+        return error_response(f'Upload failed: {str(e)}', HTTP_INTERNAL_SERVER_ERROR)
 
 @app.route('/api/warp', methods=['POST'])
 def warp_image():
@@ -170,10 +215,12 @@ def warp_image():
         target_sectors_json = data['target_sectors']
         debug_mode = data.get('debug_mode', False)
         
-        if source_image_id not in image_store:
-            return error_response('Source image not found', HTTP_NOT_FOUND)
+        if not source_image_id or not isinstance(source_image_id, str):
+            return error_response('Invalid source_image_id', HTTP_BAD_REQUEST)
         
-        source_image = image_store[source_image_id]
+        source_image = get_image(source_image_id)
+        if source_image is None:
+            return error_response(f'Source image not found (ID: {source_image_id})', HTTP_NOT_FOUND)
         height, width = source_image.shape[:2]
         
         if not validate_image_dimensions(width, height):
@@ -222,13 +269,18 @@ def mixup_images():
         debug_mode = data.get('debug_mode', False)
         alpha = data.get('alpha', DEFAULT_ALPHA)
         
-        if image1_id not in image_store:
-            return error_response('Image 1 not found', HTTP_NOT_FOUND)
-        if image2_id not in image_store:
-            return error_response('Image 2 not found', HTTP_NOT_FOUND)
+        if not image1_id or not isinstance(image1_id, str):
+            return error_response('Invalid image1_id', HTTP_BAD_REQUEST)
+        if not image2_id or not isinstance(image2_id, str):
+            return error_response('Invalid image2_id', HTTP_BAD_REQUEST)
         
-        image1 = image_store[image1_id]
-        image2 = image_store[image2_id]
+        image1 = get_image(image1_id)
+        if image1 is None:
+            return error_response(f'Image 1 not found (ID: {image1_id})', HTTP_NOT_FOUND)
+        
+        image2 = get_image(image2_id)
+        if image2 is None:
+            return error_response(f'Image 2 not found (ID: {image2_id})', HTTP_NOT_FOUND)
         height1, width1 = image1.shape[:2]
         height2, width2 = image2.shape[:2]
         
