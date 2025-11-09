@@ -63,20 +63,34 @@ def validate_image_dimensions(width: int, height: int) -> bool:
         return False
     return True
 
-def cleanup_old_images():
-    """Remove oldest images if we exceed the storage limit."""
+def cleanup_old_images(exclude_image_id: Optional[str] = None):
+    """
+    Remove oldest images if we exceed the storage limit.
+    
+    Args:
+        exclude_image_id: Image ID to exclude from cleanup (e.g., newly uploaded image)
+    """
     if len(image_store) <= MAX_IMAGES_STORED:
         return
     
-    # Sort by access time and remove oldest
+    # Sort by access time and remove oldest, excluding the specified image
     sorted_images = sorted(image_store_access_times.items(), key=lambda x: x[1])
     images_to_remove = len(image_store) - MAX_IMAGES_STORED
+    removed_count = 0
     
-    for image_id, _ in sorted_images[:images_to_remove]:
+    for image_id, _ in sorted_images:
+        # Skip the excluded image (e.g., the one we just uploaded)
+        if exclude_image_id and image_id == exclude_image_id:
+            continue
+        
         if image_id in image_store:
             del image_store[image_id]
         if image_id in image_store_access_times:
             del image_store_access_times[image_id]
+        
+        removed_count += 1
+        if removed_count >= images_to_remove:
+            break
 
 def get_image(image_id: str) -> Optional[np.ndarray]:
     """Get image from store and update access time."""
@@ -232,16 +246,18 @@ def upload_image():
         # Generate image ID first
         image_id = str(uuid.uuid4())
         
-        # Cleanup old images before adding new one (but exclude the one we're about to add)
-        cleanup_old_images()
-        
-        # Store the new image with current timestamp
+        # Store the new image FIRST with current timestamp
+        # This ensures the image is immediately available for verification
         image_store[image_id] = image_bgr
         image_store_access_times[image_id] = time.time()
         
         # Verify the image was stored correctly
         if image_id not in image_store:
             return error_response('Failed to store image', HTTP_INTERNAL_SERVER_ERROR)
+        
+        # Cleanup old images AFTER storing the new one
+        # Exclude the newly uploaded image from cleanup
+        cleanup_old_images(exclude_image_id=image_id)
         
         return jsonify({
             'image_id': image_id,
