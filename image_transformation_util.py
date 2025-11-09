@@ -1,4 +1,3 @@
-import torch
 from typing import Tuple, List
 import cv2
 import math
@@ -42,12 +41,12 @@ class LinearBoundedSector:
             bound_height: int):
         """
         Specifically gives you the three sector from the raw data points.
-            - raw_points: List of 4 torch tensors containing relative coordinates (normalized 0-1)
+            - raw_points: List of 4 points containing relative coordinates (normalized 0-1)
             points = [
-                torch.tensor([x_center, y_center]),  # Center (relative coordinates, will be converted to absolute)
-                torch.tensor([x_adhesion, y_adhesion]),  # Direction of adhesion (relative coordinates)
-                torch.tensor([x_left, y_left]),  # Direction of left mounting (relative coordinates)
-                torch.tensor([x_right, y_right]),  # Direction of right mounting (relative coordinates)
+                [x_center, y_center],  # Center (relative coordinates, will be converted to absolute)
+                [x_adhesion, y_adhesion],  # Direction of adhesion (relative coordinates)
+                [x_left, y_left],  # Direction of left mounting (relative coordinates)
+                [x_right, y_right],  # Direction of right mounting (relative coordinates)
             ]
             All coordinates are converted from relative (0-1 range) to absolute pixel coordinates
             by multiplying by bound_width and bound_height.
@@ -58,19 +57,19 @@ class LinearBoundedSector:
 
         # Convert relative coordinates to absolute pixel coordinates
         # Center coordinates (relative [0-1] -> absolute pixels)
-        center_rel = raw_points[0].float().tolist()
+        center_rel = [float(raw_points[0][0]), float(raw_points[0][1])]
         center = [int(center_rel[0] * bound_width), int(center_rel[1] * bound_height)]
         
         # Direction coordinates (relative [0-1] -> absolute pixels)
-        left_mounting_direction_rel = raw_points[1].float().tolist()  # ABDOMINAL WALL true
+        left_mounting_direction_rel = [float(raw_points[1][0]), float(raw_points[1][1])]  # ABDOMINAL WALL true
         left_mounting_direction = [int(left_mounting_direction_rel[0] * bound_width), 
                                 int(left_mounting_direction_rel[1] * bound_height)]
 
-        right_mounting_direction_rel = raw_points[2].float().tolist() # ABDOMINAL WALL false  
+        right_mounting_direction_rel = [float(raw_points[2][0]), float(raw_points[2][1])] # ABDOMINAL WALL false  
         right_mounting_direction = [int(right_mounting_direction_rel[0] * bound_width), 
                                 int(right_mounting_direction_rel[1] * bound_height)]
 
-        adhesion_direction_rel = raw_points[3].float().tolist()  # FAT
+        adhesion_direction_rel = [float(raw_points[3][0]), float(raw_points[3][1])]  # FAT
         adhesion_direction = [int(adhesion_direction_rel[0] * bound_width), 
                             int(adhesion_direction_rel[1] * bound_height)]
         
@@ -952,11 +951,11 @@ if __name__ == "__main__":
     
     with open(json_path, 'r') as file:
             data = json.load(file)
-    points = [torch.tensor([x, y]) for _, (x, y), _ in data]
+    points = [[float(x), float(y)] for _, (x, y), _ in data]
 
     with open(json_path2, 'r') as file:
             data2 = json.load(file)
-    points2 = [torch.tensor([x, y]) for _, (x, y), _ in data]
+    points2 = [[float(x), float(y)] for _, (x, y), _ in data]
 
     print(points)
 
