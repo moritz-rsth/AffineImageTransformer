@@ -12,4 +12,5 @@ flask
 flask-cors
 werkzeug
 Pillow
+gunicorn
 

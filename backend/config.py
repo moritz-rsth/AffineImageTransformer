@@ -2,8 +2,9 @@
 import os
 
 # Server configuration
-HOST = os.getenv('FLASK_HOST', '127.0.0.1')
-PORT = int(os.getenv('FLASK_PORT', '5001'))
+# Railway sets PORT environment variable, fallback to FLASK_PORT or 5001
+HOST = os.getenv('FLASK_HOST', '0.0.0.0')  # 0.0.0.0 to accept connections from any IP
+PORT = int(os.getenv('PORT', os.getenv('FLASK_PORT', '5001')))
 
 # Image processing configuration
 JPEG_QUALITY = 95

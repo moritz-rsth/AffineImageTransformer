@@ -312,4 +312,6 @@ def frontend_static(filename):
     return error_response('Not found', HTTP_NOT_FOUND)
 
 if __name__ == '__main__':
-    app.run(debug=True, port=PORT, host=HOST)
+    # Disable debug mode in production (Railway sets FLASK_DEBUG=false)
+    debug_mode = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
+    app.run(debug=debug_mode, port=PORT, host=HOST)
