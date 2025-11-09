@@ -63,24 +63,58 @@ def validate_image_dimensions(width: int, height: int) -> bool:
         return False
     return True
 
-def cleanup_old_images(exclude_image_id: Optional[str] = None):
+def cleanup_old_images(exclude_image_id: Optional[str] = None, min_age_seconds: float = 10.0):
     """
     Remove oldest images if we exceed the storage limit.
     
+    Protection rules:
+    - Only cleanup if there are more than 5 images AND we exceed MAX_IMAGES_STORED
+    - Always protect the last 3 most recently accessed images
+    - Protect images accessed within min_age_seconds
+    - Never cleanup the excluded image (newly uploaded)
+    
     Args:
         exclude_image_id: Image ID to exclude from cleanup (e.g., newly uploaded image)
+        min_age_seconds: Minimum age in seconds before an image can be cleaned up.
+                         This protects recently accessed images from premature removal.
     """
+    # Only cleanup if we have more than 5 images AND exceed the storage limit
+    if len(image_store) <= 5:
+        return
+    
+    # Don't cleanup if we're at or below the storage limit
     if len(image_store) <= MAX_IMAGES_STORED:
         return
     
-    # Sort by access time and remove oldest, excluding the specified image
-    sorted_images = sorted(image_store_access_times.items(), key=lambda x: x[1])
+    current_time = time.time()
     images_to_remove = len(image_store) - MAX_IMAGES_STORED
     removed_count = 0
     
-    for image_id, _ in sorted_images:
-        # Skip the excluded image (e.g., the one we just uploaded)
-        if exclude_image_id and image_id == exclude_image_id:
+    # Sort by access time (most recent last)
+    sorted_images = sorted(image_store_access_times.items(), key=lambda x: x[1])
+    
+    # Always protect the last 3 most recently accessed images
+    # (these are likely to be in active use, especially in mixup mode)
+    protected_count = min(3, len(sorted_images))
+    protected_images = set()
+    if protected_count > 0:
+        # Get the last N images (most recent)
+        for image_id, _ in sorted_images[-protected_count:]:
+            protected_images.add(image_id)
+    
+    # Also protect the excluded image
+    if exclude_image_id:
+        protected_images.add(exclude_image_id)
+    
+    # Remove oldest images, but skip protected ones
+    for image_id, access_time in sorted_images:
+        # Skip protected images (last 3 most recent + excluded)
+        if image_id in protected_images:
+            continue
+        
+        # Protect recently accessed images (accessed within min_age_seconds)
+        age = current_time - access_time
+        if age < min_age_seconds:
             continue
         
         if image_id in image_store:
@@ -91,6 +125,25 @@ def cleanup_old_images(exclude_image_id: Optional[str] = None):
         removed_count += 1
         if removed_count >= images_to_remove:
             break
+    
+    # If we still have too many images after protecting recent ones,
+    # we need to be more aggressive (but still protect last 3 and excluded)
+    if len(image_store) > MAX_IMAGES_STORED:
+        # Only remove very old images (older than 60 seconds) if we're still over limit
+        sorted_images = sorted(image_store_access_times.items(), key=lambda x: x[1])
+        for image_id, access_time in sorted_images:
+            # Still protect the last 3 and excluded image
+            if image_id in protected_images:
+                continue
+            age = current_time - access_time
+            # Only remove images that are definitely old and not in use
+            if age >= 60.0:
+                if image_id in image_store:
+                    del image_store[image_id]
+                if image_id in image_store_access_times:
+                    del image_store_access_times[image_id]
+                if len(image_store) <= MAX_IMAGES_STORED:
+                    break
 
 def get_image(image_id: str) -> Optional[np.ndarray]:
     """Get image from store and update access time."""
@@ -157,12 +210,17 @@ def validate_request_data(data: Dict, required_fields: List[str]) -> Optional[Tu
 def validate_image_id(image_id: str, field_name: str = 'image_id') -> Tuple[Optional[np.ndarray], Optional[Tuple[Dict, int]]]:
     """
     Validate image ID and retrieve image from store.
+    Updates access time to protect the image from cleanup.
     
     Returns:
         Tuple of (image, error_response). If error_response is not None, image is None.
     """
     if not image_id or not isinstance(image_id, str):
         return None, error_response(f'Invalid {field_name}', HTTP_BAD_REQUEST)
+    
+    # Update access time immediately to protect from cleanup
+    if image_id in image_store:
+        image_store_access_times[image_id] = time.time()
     
     image = get_image(image_id)
     if image is None:
@@ -248,22 +306,35 @@ def upload_image():
         
         # Store the new image FIRST with current timestamp
         # This ensures the image is immediately available for verification
+        current_time = time.time()
         image_store[image_id] = image_bgr
-        image_store_access_times[image_id] = time.time()
+        image_store_access_times[image_id] = current_time
         
         # Verify the image was stored correctly
         if image_id not in image_store:
             return error_response('Failed to store image', HTTP_INTERNAL_SERVER_ERROR)
         
-        # Cleanup old images AFTER storing the new one
-        # Exclude the newly uploaded image from cleanup
-        cleanup_old_images(exclude_image_id=image_id)
+        # Only cleanup if we're over the limit AFTER storing the new image
+        # This prevents premature cleanup and protects recently uploaded images
+        if len(image_store) > MAX_IMAGES_STORED:
+            # Use longer min_age to protect recently accessed images
+            # This ensures images that are still in use won't be removed
+            cleanup_old_images(exclude_image_id=image_id, min_age_seconds=10.0)
+        
+        # Encode preview image AFTER cleanup (this can be slow for large images)
+        # The image is already stored, so it's safe even if encoding is slow
+        try:
+            preview_url = encode_image_base64(image_bgr)
+        except Exception as e:
+            # If encoding fails, still return the image_id so the image can be used
+            # The frontend can request the image directly if needed
+            return error_response(f'Failed to encode preview image: {str(e)}', HTTP_INTERNAL_SERVER_ERROR)
         
         return jsonify({
             'image_id': image_id,
             'width': width,
             'height': height,
-            'preview_url': encode_image_base64(image_bgr)
+            'preview_url': preview_url
         })
     
     except Exception as e:
@@ -326,6 +397,9 @@ def warp_image():
         target_sectors, error_resp = validate_sectors(target_sectors_json, width, height, 'target_sectors')
         if error_resp:
             return error_resp
+        
+        # Update access time again before processing to protect from cleanup during operation
+        image_store_access_times[source_image_id] = time.time()
         
         warped_image = ImageSectorTransformer.arbitrary_sector_warping(
             src_image=source_image,
@@ -390,6 +464,11 @@ def mixup_images():
         sectors2, error_resp = validate_sectors(sectors2_json, width2, height2, 'sectors2')
         if error_resp:
             return error_resp
+        
+        # Update access times for both images before processing to protect from cleanup
+        current_time = time.time()
+        image_store_access_times[image1_id] = current_time
+        image_store_access_times[image2_id] = current_time
         
         result_image = image1.copy().astype(np.uint8)
         

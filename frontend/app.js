@@ -190,6 +190,22 @@ class App {
     async handleImageUpload(uploadResult) {
         const { image_id, width, height, preview_url } = uploadResult;
         
+        // Verify the image was stored successfully before updating state
+        // Use short retry with small delay since image should be immediately available
+        // For large files, give the server a moment to complete storage
+        try {
+            // Small delay to ensure server has completed storage operations
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
+            const imageExists = await this.verifyImages(image_id, 5, 300);
+            if (!imageExists) {
+                throw new Error('Image was uploaded but not found on server. The upload may have failed. Please try uploading again.');
+            }
+        } catch (error) {
+            // If verification fails, throw error to be handled by caller
+            throw new Error(`Failed to verify uploaded image: ${error.message}`);
+        }
+        
         if (this.currentMode === 'warping') {
             await this.handleWarpingImageUpload(image_id, width, height, preview_url);
         } else {
