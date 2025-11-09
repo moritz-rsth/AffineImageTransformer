@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Affine Image Transformer</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Affine Image Transformer</h1>
+        </header>
+
+        <!-- Tab Navigation -->
+        <div class="tabs">
+            <button class="tab-button active" data-mode="warping">Warping Mode</button>
+            <button class="tab-button" data-mode="mixup">Mixup Mode</button>
+        </div>
+
+        <!-- Warping Mode -->
+        <div id="warping-mode" class="mode-content active">
+            <div class="control-panel">
+                <div class="control-group">
+                    <button id="warp-upload-btn" class="btn btn-primary">Upload Image</button>
+                    <button id="warp-add-sector-btn" class="btn">Add Sector</button>
+                    <button id="warp-apply-btn" class="btn btn-success" disabled>Apply Warp</button>
+                    <button id="warp-clear-btn" class="btn btn-secondary">Clear</button>
+                </div>
+                <div class="control-group">
+                    <label>
+                        <input type="checkbox" id="warp-debug-checkbox"> Debug Mode
+                    </label>
+                </div>
+            </div>
+            <div class="canvas-container">
+                <div class="canvas-wrapper">
+                    <h3>Source Image</h3>
+                    <canvas id="warp-source-canvas"></canvas>
+                </div>
+                <div class="canvas-wrapper">
+                    <h3>Target Sectors</h3>
+                    <canvas id="warp-target-canvas"></canvas>
+                </div>
+                <div class="canvas-wrapper">
+                    <h3>Result</h3>
+                    <canvas id="warp-result-canvas"></canvas>
+                    <button id="warp-download-btn" class="btn btn-success download-btn" disabled>Download Result</button>
+                </div>
+            </div>
+            <div id="warp-error-message" class="error-message"></div>
+        </div>
+
+        <!-- Mixup Mode -->
+        <div id="mixup-mode" class="mode-content">
+            <div class="control-panel">
+                <div class="control-group">
+                    <button id="mixup-upload1-btn" class="btn btn-primary">Upload Source Image</button>
+                    <button id="mixup-upload2-btn" class="btn btn-primary">Upload Mixin Image</button>
+                    <button id="mixup-add-sector-btn" class="btn">Add Sector</button>
+                    <button id="mixup-generate-btn" class="btn btn-success" disabled>Generate Mixup</button>
+                    <button id="mixup-clear-btn" class="btn btn-secondary">Clear</button>
+                </div>
+                <div class="control-group">
+                    <label>
+                        Mixup Alpha: <input type="range" id="mixup-alpha-slider" min="0" max="1" step="0.1">
+                        <span id="mixup-alpha-value"></span>
+                    </label>
+                    <label>
+                        Highlight Opacity: <input type="range" id="mixup-highlight-opacity-slider" min="0.1" max="1" step="0.1">
+                        <span id="mixup-highlight-opacity-value"></span>
+                    </label>
+                </div>
+            </div>
+            <div class="canvas-container">
+                <div class="canvas-wrapper">
+                    <h3>Source Image</h3>
+                    <canvas id="mixup-source1-canvas"></canvas>
+                </div>
+                <div class="canvas-wrapper">
+                    <h3>Mixin Image</h3>
+                    <canvas id="mixup-source2-canvas"></canvas>
+                </div>
+                <div class="canvas-wrapper">
+                    <h3>Result</h3>
+                    <canvas id="mixup-result-canvas"></canvas>
+                    <button id="mixup-download-btn" class="btn btn-success download-btn" disabled>Download Result</button>
+                </div>
+            </div>
+            <div id="mixup-sector-mapping-container" class="sector-mapping-container">
+                <div class="sector-mapping-column">
+                    <h4>Sectors from Source Image</h4>
+                    <div id="mixup-sector-mapping-source" class="sector-mapping"></div>
+                </div>
+                <div class="sector-mapping-column-middle">
+                    <h4>&nbsp;</h4>
+                    <div id="mixup-sector-mapping-arrow" class="sector-mapping-arrow"></div>
+                </div>
+                <div class="sector-mapping-column">
+                    <h4>Sectors from Mixin Image</h4>
+                    <div id="mixup-sector-mapping-mixin" class="sector-mapping"></div>
+                </div>
+            </div>
+            <div id="mixup-error-message" class="error-message"></div>
+        </div>
+
+        <!-- Hidden file input -->
+        <input type="file" id="file-input" accept="image/*" style="display: none;">
+    </div>
+
+    <script src="constants.js"></script>
+    <script src="utils.js"></script>
+    <script src="components/api-client.js"></script>
+    <script src="components/canvas-controller.js"></script>
+    <script src="components/sector-manager.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
+

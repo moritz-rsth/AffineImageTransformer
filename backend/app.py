@@ -1,0 +1,315 @@
+import os
+import sys
+import uuid
+import base64
+import cv2
+import numpy as np
+from flask import Flask, request, jsonify, send_from_directory
+from flask_cors import CORS
+from PIL import Image as PILImage
+import io
+from typing import Tuple, Dict, List, Optional
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from image_transformation_util import LinearBoundedSector, ImageSectorTransformer
+from config import (
+    HOST, PORT, JPEG_QUALITY, MAX_FILE_SIZE, ALLOWED_EXTENSIONS,
+    DEFAULT_ALPHA, HTTP_BAD_REQUEST, HTTP_NOT_FOUND, HTTP_INTERNAL_SERVER_ERROR
+)
+
+app = Flask(__name__, static_folder=None)
+CORS(app)
+
+FRONTEND_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'frontend')
+
+image_store: Dict[str, np.ndarray] = {}
+
+def allowed_file(filename: str) -> bool:
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def encode_image_base64(image_bgr: np.ndarray) -> str:
+    """Convert BGR image to base64 RGB string for web display."""
+    if len(image_bgr.shape) == 3 and image_bgr.shape[2] == 3:
+        image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+        pil_image = PILImage.fromarray(image_rgb)
+        buffer = io.BytesIO()
+        pil_image.save(buffer, format='JPEG', quality=JPEG_QUALITY)
+        image_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+        return f"data:image/jpeg;base64,{image_base64}"
+    else:
+        _, buffer = cv2.imencode('.jpg', image_bgr, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+        image_base64 = base64.b64encode(buffer).decode('utf-8')
+        return f"data:image/jpeg;base64,{image_base64}"
+
+def decode_image_base64(image_base64: str) -> np.ndarray:
+    """Decode base64 image to BGR numpy array."""
+    if ',' in image_base64:
+        image_base64 = image_base64.split(',')[1]
+    image_bytes = base64.b64decode(image_base64)
+    nparr = np.frombuffer(image_bytes, np.uint8)
+    image_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if image_bgr is None:
+        raise ValueError("Failed to decode image")
+    return image_bgr
+
+def validate_image_dimensions(width: int, height: int) -> bool:
+    """Validate that image dimensions are valid."""
+    return width > 0 and height > 0
+
+def validate_point(x: float, y: float, name: str, width: int, height: int) -> Tuple[int, int]:
+    """Validate that a point is within image bounds."""
+    try:
+        x = int(x)
+        y = int(y)
+    except (ValueError, TypeError) as e:
+        raise ValueError(f"Invalid coordinate value in {name}: {e}")
+    
+    if x < 0 or x >= width or y < 0 or y >= height:
+        raise ValueError(f"{name} coordinates ({x}, {y}) are out of bounds for image ({width}x{height})")
+    return (x, y)
+
+def json_to_sector(sector_json: Dict, width: int, height: int) -> LinearBoundedSector:
+    """Convert JSON sector data to LinearBoundedSector instance."""
+    try:
+        center = validate_point(
+            sector_json['center']['x'], 
+            sector_json['center']['y'], 
+            'Center',
+            width,
+            height
+        )
+        edge_point1 = validate_point(
+            sector_json['edge_point1']['x'], 
+            sector_json['edge_point1']['y'], 
+            'Edge point 1',
+            width,
+            height
+        )
+        edge_point2 = validate_point(
+            sector_json['edge_point2']['x'], 
+            sector_json['edge_point2']['y'], 
+            'Edge point 2',
+            width,
+            height
+        )
+    except KeyError as e:
+        raise ValueError(f"Missing required field in sector data: {e}")
+    
+    return LinearBoundedSector(
+        center=center,
+        edge_point1=edge_point1,
+        edge_point2=edge_point2,
+        bound_width=width,
+        bound_height=height
+    )
+
+def validate_request_data(data: Dict, required_fields: List[str]) -> Optional[Tuple[str, int]]:
+    """Validate that all required fields are present in request data."""
+    for field in required_fields:
+        if field not in data:
+            return (f'{field} is required', HTTP_BAD_REQUEST)
+    return None
+
+def error_response(message: str, status_code: int) -> Tuple[Dict, int]:
+    """Create a standardized error response."""
+    return jsonify({'error': message}), status_code
+
+@app.route('/api/upload', methods=['POST'])
+def upload_image():
+    """Upload an image file and return image metadata."""
+    try:
+        if 'image' not in request.files:
+            return error_response('No image file provided', HTTP_BAD_REQUEST)
+        
+        file = request.files['image']
+        if file.filename == '':
+            return error_response('No file selected', HTTP_BAD_REQUEST)
+        
+        if not allowed_file(file.filename):
+            return error_response('Invalid file type', HTTP_BAD_REQUEST)
+        
+        file_bytes = file.read()
+        if len(file_bytes) > MAX_FILE_SIZE:
+            return error_response('File too large', HTTP_BAD_REQUEST)
+        
+        nparr = np.frombuffer(file_bytes, np.uint8)
+        image_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if image_bgr is None:
+            return error_response('Failed to decode image', HTTP_BAD_REQUEST)
+        
+        image_id = str(uuid.uuid4())
+        image_store[image_id] = image_bgr
+        
+        height, width = image_bgr.shape[:2]
+        
+        if not validate_image_dimensions(width, height):
+            return error_response('Invalid image dimensions', HTTP_BAD_REQUEST)
+        
+        return jsonify({
+            'image_id': image_id,
+            'width': width,
+            'height': height,
+            'preview_url': encode_image_base64(image_bgr)
+        })
+    
+    except Exception as e:
+        return error_response(str(e), HTTP_INTERNAL_SERVER_ERROR)
+
+@app.route('/api/warp', methods=['POST'])
+def warp_image():
+    """Warp an image using source and target sectors."""
+    try:
+        data = request.get_json()
+        
+        error = validate_request_data(data, ['source_image_id', 'source_sectors', 'target_sectors'])
+        if error:
+            return error_response(error[0], error[1])
+        
+        source_image_id = data['source_image_id']
+        source_sectors_json = data['source_sectors']
+        target_sectors_json = data['target_sectors']
+        debug_mode = data.get('debug_mode', False)
+        
+        if source_image_id not in image_store:
+            return error_response('Source image not found', HTTP_NOT_FOUND)
+        
+        source_image = image_store[source_image_id]
+        height, width = source_image.shape[:2]
+        
+        if not validate_image_dimensions(width, height):
+            return error_response('Invalid image dimensions', HTTP_BAD_REQUEST)
+        
+        if len(source_sectors_json) == 0:
+            return error_response('At least one sector is required', HTTP_BAD_REQUEST)
+        if len(source_sectors_json) != len(target_sectors_json):
+            return error_response('Source and target must have same number of sectors', HTTP_BAD_REQUEST)
+        
+        source_sectors = [json_to_sector(s, width, height) for s in source_sectors_json]
+        target_sectors = [json_to_sector(s, width, height) for s in target_sectors_json]
+        
+        warped_image = ImageSectorTransformer.arbitrary_sector_warping(
+            src_image=source_image,
+            source_sectors=source_sectors,
+            target_sectors=target_sectors,
+            debug=debug_mode
+        )
+        
+        result_base64 = encode_image_base64(warped_image)
+        
+        return jsonify({
+            'result_image': result_base64,
+            'debug_info': {'num_sectors': len(source_sectors), 'debug_mode': debug_mode} if debug_mode else None
+        })
+    
+    except Exception as e:
+        return error_response(str(e), HTTP_INTERNAL_SERVER_ERROR)
+
+@app.route('/api/mixup', methods=['POST'])
+def mixup_images():
+    """Mix two images using sector mappings."""
+    try:
+        data = request.get_json()
+        
+        error = validate_request_data(data, ['image1_id', 'image2_id', 'sectors1', 'sectors2', 'sector_mapping'])
+        if error:
+            return error_response(error[0], error[1])
+        
+        image1_id = data['image1_id']
+        image2_id = data['image2_id']
+        sectors1_json = data['sectors1']
+        sectors2_json = data['sectors2']
+        sector_mapping = data['sector_mapping']
+        debug_mode = data.get('debug_mode', False)
+        alpha = data.get('alpha', DEFAULT_ALPHA)
+        
+        if image1_id not in image_store:
+            return error_response('Image 1 not found', HTTP_NOT_FOUND)
+        if image2_id not in image_store:
+            return error_response('Image 2 not found', HTTP_NOT_FOUND)
+        
+        image1 = image_store[image1_id]
+        image2 = image_store[image2_id]
+        height1, width1 = image1.shape[:2]
+        height2, width2 = image2.shape[:2]
+        
+        if not validate_image_dimensions(width1, height1):
+            return error_response('Invalid dimensions for image 1', HTTP_BAD_REQUEST)
+        if not validate_image_dimensions(width2, height2):
+            return error_response('Invalid dimensions for image 2', HTTP_BAD_REQUEST)
+        
+        if not isinstance(alpha, (int, float)) or alpha < 0 or alpha > 1:
+            return error_response('alpha must be a number between 0 and 1', HTTP_BAD_REQUEST)
+        
+        if len(sectors1_json) == 0:
+            return error_response('At least one sector is required for image 1', HTTP_BAD_REQUEST)
+        if len(sectors2_json) == 0:
+            return error_response('At least one sector is required for image 2', HTTP_BAD_REQUEST)
+        
+        if len(sector_mapping) == 0:
+            return error_response('At least one sector mapping is required', HTTP_BAD_REQUEST)
+        
+        sectors1 = [json_to_sector(s, width1, height1) for s in sectors1_json]
+        sectors2 = [json_to_sector(s, width2, height2) for s in sectors2_json]
+        
+        result_image = image1.copy().astype(np.uint8)
+        
+        mixup_info = []
+        for mapping in sector_mapping:
+            src_idx = mapping.get('src_index')
+            dst_idx = mapping.get('dst_index')
+            
+            if src_idx is None or dst_idx is None:
+                continue
+            
+            if src_idx < 0 or src_idx >= len(sectors1):
+                continue
+            if dst_idx < 0 or dst_idx >= len(sectors2):
+                continue
+            
+            src_sector = sectors1[src_idx]
+            dst_sector = sectors2[dst_idx]
+            
+            result_image = ImageSectorTransformer.sector_mixup(
+                src_image=result_image,
+                src_sector=src_sector,
+                dst_image=image2,
+                dst_sector=dst_sector,
+                alpha=alpha
+            )
+            
+            mixup_info.append({
+                'src_index': src_idx,
+                'dst_index': dst_idx
+            })
+        
+        result_base64 = encode_image_base64(result_image)
+        
+        return jsonify({
+            'result_image': result_base64,
+            'debug_info': {'mixup_mappings': mixup_info, 'debug_mode': debug_mode} if debug_mode else None
+        })
+    
+    except Exception as e:
+        return error_response(str(e), HTTP_INTERNAL_SERVER_ERROR)
+
+@app.route('/health', methods=['GET'])
+def health():
+    """Health check endpoint."""
+    return jsonify({'status': 'ok'})
+
+@app.route('/')
+def index():
+    return send_from_directory(FRONTEND_DIR, 'index.html')
+
+@app.route('/components/<path:filename>')
+def components(filename):
+    return send_from_directory(os.path.join(FRONTEND_DIR, 'components'), filename)
+
+@app.route('/<path:filename>')
+def frontend_static(filename):
+    if filename.endswith(('.html', '.css', '.js', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico')):
+        return send_from_directory(FRONTEND_DIR, filename)
+    return error_response('Not found', HTTP_NOT_FOUND)
+
+if __name__ == '__main__':
+    app.run(debug=True, port=PORT, host=HOST)

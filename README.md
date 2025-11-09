@@ -1,202 +1,251 @@
-# Affine Image Transformer
+# Affine Image Transformer - Web Demo
 
-A Python library for performing sector-based affine transformations on images. This library provides tools for warping and mixing image sectors using radial triangular transformations.
+Interactive web application for experimenting with the Affine Image Transformer library. This demo provides a user-friendly interface for warping and mixing image sectors.
 
-## Overview
+## Features
 
-The `AffineImageTransformer` library implements a novel approach to image transformation using sector-based geometry. It allows you to:
-
-- Define image sectors using center points and boundary edges
-- Perform arbitrary sector warping (transform sectors from one configuration to another)
-- Mix sectors between different images with alpha blending
-- Generate radial triangular meshes for precise geometric transformations
-
-## Core Components
-
-### `LinearBoundedSector`
-
-Represents a single angular sector of an image, defined by:
-- **Center point**: The origin of radial rays
-- **Edge points**: Two boundary points that define the sector's angular span
-- **Image bounds**: Width and height constraints
-
-**Key Features:**
-- Automatic boundary intersection calculation
-- Radial triangle generation for transformation meshes
-- Angle normalization and point sorting
-- Sector validation and geometric operations
-
-### `ImageSectorTransformer`
-
-Provides static methods for image transformation operations:
-
-- **`arbitrary_sector_warping()`**: Warp an image by transforming source sectors to target sectors
-- **`sector_mixup()`**: Mix pixels from one image's sector into another image's sector
-- **`map_triangles()`**: Core transformation engine using affine triangle mapping
+- **Warping Mode**: Define source and target sectors to warp images interactively
+- **Mixup Mode**: Mix sectors from two different images with alpha blending
+- **Interactive Sector Editing**: Drag and drop sector boundary points
+- **Real-time Preview**: See transformations applied instantly
+- **Download Results**: Save transformed images directly from the browser
 
 ## Installation
 
-### Core Dependencies
+### Prerequisites
+
+- Python 3.7+
+- Web browser (Chrome, Firefox, Safari, or Edge)
+
+### Setup
+
+1. Install Python dependencies:
 
 ```bash
-pip install opencv-python numpy torch matplotlib
+pip install -r requirements.txt
 ```
 
-### Full Installation (including web demo)
+2. Start the Flask backend server:
 
-See [web_demo/README.md](web_demo/README.md) for complete installation instructions including the web interface.
-
-## Quick Start
-
-```python
-from image_transformation_util import LinearBoundedSector, ImageSectorTransformer
-import cv2
-import numpy as np
-
-# Load an image
-image = cv2.imread('example.jpg')
-
-# Define source sector
-source_sector = LinearBoundedSector(
-    center=(320, 240),
-    edge_point1=(640, 0),
-    edge_point2=(640, 480),
-    bound_width=640,
-    bound_height=480
-)
-
-# Define target sector (warped configuration)
-target_sector = LinearBoundedSector(
-    center=(320, 240),
-    edge_point1=(640, 100),
-    edge_point2=(640, 380),
-    bound_width=640,
-    bound_height=480
-)
-
-# Perform warping
-warped_image = ImageSectorTransformer.arbitrary_sector_warping(
-    src_image=image,
-    source_sectors=[source_sector],
-    target_sectors=[target_sector],
-    debug=False
-)
-
-# Save result
-cv2.imwrite('warped_result.jpg', warped_image)
+```bash
+cd backend
+python app.py
 ```
 
-## Advanced Usage
+The server will start on `http://localhost:5001` (default).
 
-### Multiple Sector Warping
+### Configuration
 
-```python
-# Define multiple sectors for complex transformations
-source_sectors = [
-    LinearBoundedSector(center=(320, 240), edge_point1=(640, 0), edge_point2=(640, 160), ...),
-    LinearBoundedSector(center=(320, 240), edge_point1=(640, 160), edge_point2=(640, 320), ...),
-    LinearBoundedSector(center=(320, 240), edge_point1=(640, 320), edge_point2=(640, 480), ...)
-]
+You can configure the server using environment variables:
 
-target_sectors = [
-    # Define target configurations...
-]
-
-warped_image = ImageSectorTransformer.arbitrary_sector_warping(
-    src_image=image,
-    source_sectors=source_sectors,
-    target_sectors=target_sectors
-)
+```bash
+export FLASK_HOST=127.0.0.1
+export FLASK_PORT=5001
+python backend/app.py
 ```
 
-### Sector Mixup
+## Usage
 
-```python
-# Mix sectors between two images
-image1 = cv2.imread('image1.jpg')
-image2 = cv2.imread('image2.jpg')
+### Starting the Application
 
-sector1 = LinearBoundedSector(...)  # Sector in image1
-sector2 = LinearBoundedSector(...)  # Sector in image2
+1. Start the backend server (see Installation above)
+2. Open your web browser and navigate to `http://localhost:5001`
+3. The web interface will load automatically
 
-# Mix with alpha blending (0.0 = only image1, 1.0 = only image2)
-mixed_image = ImageSectorTransformer.sector_mixup(
-    src_image=image1,
-    src_sector=sector1,
-    dst_image=image2,
-    dst_sector=sector2,
-    alpha=0.5
-)
+### Warping Mode
+
+1. **Upload Image**: Click "Upload Image" to select a source image
+2. **Define Source Sectors**: 
+   - The image loads with 3 default sectors (minimum required)
+   - Drag the center point to move all sectors
+   - Drag boundary points (numbered circles) to adjust sector boundaries
+   - Click "Add Sector" to create additional sectors
+3. **Define Target Sectors**: 
+   - Adjust sectors on the target canvas to define the desired output layout
+   - Source and target must have the same number of sectors
+4. **Apply Warp**: Click "Apply Warp" to generate the transformed result
+5. **Download**: Click "Download Result" to save the warped image
+
+### Mixup Mode
+
+1. **Upload Images**: 
+   - Click "Upload Source Image" to upload the first image
+   - Click "Upload Mixin Image" to upload the second image
+2. **Define Sectors**: 
+   - Both images start with 3 default sectors
+   - Adjust sectors on both images as needed
+   - Click "Add Sector" to add sectors to both images simultaneously
+3. **Create Mappings**: 
+   - Use the dropdown menus to map source sectors to mixin sectors
+   - Each source sector can be mapped to a mixin sector
+4. **Adjust Settings**:
+   - Use the "Mixup Alpha" slider to control mixing intensity (0.0 = only source, 1.0 = only mixin)
+   - Use the "Highlight Opacity" slider to adjust sector highlighting visibility
+5. **Generate Mixup**: Click "Generate Mixup" to create the mixed result
+6. **Download**: Click "Download Result" to save the mixed image
+
+### Sector Interaction
+
+- **Drag Center Point**: Move all sectors together (black circle)
+- **Drag Boundary Points**: Adjust individual sector boundaries (numbered white circles)
+- **Right-Click Boundary Point**: Delete a sector (minimum 3 sectors required)
+- **Add Sector**: Click "Add Sector" button to create a new sector
+- **Clear**: Click "Clear" to reset all sectors and images
+
+### Sector Numbering
+
+- Each boundary line has a permanent number assigned when created
+- Sectors are defined clockwise from each boundary line
+- The number on a boundary point indicates the sector number (clockwise from that line)
+- Users are responsible for maintaining correct sector order
+
+## API Endpoints
+
+### POST `/api/upload`
+
+Upload an image file.
+
+**Request**: `multipart/form-data` with `image` file  
+**Response**: 
+```json
+{
+  "image_id": "uuid-string",
+  "width": 1920,
+  "height": 1080,
+  "preview_url": "data:image/jpeg;base64,..."
+}
+```
+
+### POST `/api/warp`
+
+Warp an image using source and target sectors.
+
+**Request**: 
+```json
+{
+  "source_image_id": "uuid-string",
+  "source_sectors": [
+    {
+      "id": "sector-1",
+      "center": {"x": 320, "y": 240},
+      "edge_point1": {"x": 640, "y": 0},
+      "edge_point2": {"x": 640, "y": 160}
+    }
+  ],
+  "target_sectors": [...],
+  "debug_mode": false
+}
+```
+
+**Response**: 
+```json
+{
+  "result_image": "data:image/jpeg;base64,...",
+  "debug_info": null
+}
+```
+
+### POST `/api/mixup`
+
+Mix two images using sector mappings.
+
+**Request**:
+```json
+{
+  "image1_id": "uuid-string",
+  "image2_id": "uuid-string",
+  "sectors1": [...],
+  "sectors2": [...],
+  "sector_mapping": [
+    {"src_index": 0, "dst_index": 1}
+  ],
+  "alpha": 0.5,
+  "debug_mode": false
+}
+```
+
+**Response**: 
+```json
+{
+  "result_image": "data:image/jpeg;base64,...",
+  "debug_info": null
+}
+```
+
+### GET `/health`
+
+Health check endpoint.
+
+**Response**: 
+```json
+{
+  "status": "ok"
+}
+```
+
+## File Structure
+
+```
+web_demo/
+  backend/
+    app.py              # Flask application and API endpoints
+    config.py           # Configuration constants
+  frontend/
+    index.html          # Main HTML structure
+    styles.css          # Styling and layout
+    app.js              # Main application logic
+    constants.js        # Frontend constants
+    utils.js            # Utility functions
+    components/
+      api-client.js     # API communication
+      canvas-controller.js  # Canvas rendering
+      sector-manager.js # Sector management
+  requirements.txt      # Python dependencies for web demo
+  README.md            # This file
 ```
 
 ## Technical Details
 
-### Transformation Algorithm
+- **Backend**: Flask with OpenCV for image processing
+- **Frontend**: Vanilla JavaScript with HTML5 Canvas
+- **Image Processing**: Uses `ImageSectorTransformer` from the parent directory
+- **Coordinate System**: Frontend uses image coordinates, backend handles boundary intersections
+- **Color Format**: Images are converted from BGR (OpenCV) to RGB for web display
+- **Image Encoding**: Uses PIL/Pillow for proper RGB JPEG encoding
 
-The library uses a radial triangular mesh approach:
+## Troubleshooting
 
-1. **Sector Decomposition**: Each sector is divided into radial triangles originating from the center point
-2. **Triangle Mapping**: Source triangles are mapped to target triangles using affine transformations
-3. **Pixel Interpolation**: Bilinear interpolation ensures smooth transitions between triangles
-4. **Boundary Handling**: Automatic clipping and boundary intersection calculations
+### Server won't start
 
-### Coordinate System
+- Check if port 5001 is already in use
+- Verify all dependencies are installed: `pip install -r requirements.txt`
+- Check Python version: `python --version` (should be 3.7+)
 
-- **Image coordinates**: Origin (0,0) at top-left corner
-- **Sector angles**: Measured in radians, normalized to [0, 2π)
-- **Boundary points**: Automatically clamped to valid pixel indices [0, width-1] × [0, height-1]
+### Images not displaying correctly
 
-## API Reference
+- Ensure the backend server is running
+- Check browser console for JavaScript errors
+- Verify image file format is supported (PNG, JPG, JPEG, GIF, BMP)
 
-### `LinearBoundedSector`
+### Sectors not working
 
-```python
-class LinearBoundedSector:
-    def __init__(self, center: Tuple[int, int], 
-                 edge_point1: Tuple[int, int], 
-                 edge_point2: Tuple[int, int],
-                 bound_width: int, 
-                 bound_height: int)
-    
-    def get_radial_triangles(self) -> Tuple[List[Tuple[int, int]], ...]
-    def add_angle_to_sector(self, angle: int, start: bool)
-    def _is_point_in_sector(self, point: Tuple[int, int]) -> bool
-```
+- Ensure at least 3 sectors are defined (minimum requirement)
+- Check that source and target have the same number of sectors
+- Verify image is loaded before trying to adjust sectors
 
-### `ImageSectorTransformer`
+## Browser Compatibility
 
-```python
-class ImageSectorTransformer:
-    @staticmethod
-    def arbitrary_sector_warping(src_image: np.ndarray,
-                                 source_sectors: List[LinearBoundedSector],
-                                 target_sectors: List[LinearBoundedSector],
-                                 debug: bool = False) -> np.ndarray
-    
-    @staticmethod
-    def sector_mixup(src_image: np.ndarray,
-                    src_sector: LinearBoundedSector,
-                    dst_image: np.ndarray,
-                    dst_sector: LinearBoundedSector,
-                    alpha: float = 0.5) -> np.ndarray
-```
-
-## Requirements
-
-- Python 3.7+
-- OpenCV (cv2)
-- NumPy
-- PyTorch
-- Matplotlib (for visualization/debugging)
+- Chrome/Edge (recommended)
+- Firefox
+- Safari
+- Opera
 
 ## License
 
-See LICENSE file for details.
+See LICENSE file in the parent directory for details.
 
-## Web Demo
+## Related
 
-For an interactive web-based interface to this library, see the [web_demo](web_demo/) directory.
+- [Core Image Transformer Library](../main/README.md) - Main library documentation (on main branch)
+- [Image Transformation Utility](image_transformation_util.py) - Core transformation classes
 
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.

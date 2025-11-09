@@ -1,7 +1,15 @@
-# Core dependencies for the Affine Image Transformer library
-# These are the minimum requirements for using the image_transformation_util.py
+# Dependencies for the web demo application
+# Includes core library dependencies plus web framework dependencies
 
+# Core image transformation library dependencies
 opencv-python
 numpy
 torch
 matplotlib
+
+# Web framework dependencies
+flask
+flask-cors
+werkzeug
+Pillow
+
