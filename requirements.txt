@@ -4,7 +4,6 @@
 # Core image transformation library dependencies
 opencv-python
 numpy
-torch
 matplotlib
 
 # Web framework dependencies

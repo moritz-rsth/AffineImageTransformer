@@ -297,6 +297,11 @@ def health():
     """Health check endpoint."""
     return jsonify({'status': 'ok'})
 
+@app.route('/favicon.ico')
+def favicon():
+    """Handle favicon requests to prevent 404 errors."""
+    return '', 204  # No Content
+
 @app.route('/')
 def index():
     return send_from_directory(FRONTEND_DIR, 'index.html')
