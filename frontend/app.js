@@ -134,6 +134,19 @@ class App {
     async handleFileUpload(file) {
         try {
             this.showError(null);
+            
+            // Show loading on appropriate canvases
+            if (this.currentMode === 'warping') {
+                this.warpingState.sourceCanvas.showLoading('Uploading image...');
+                this.warpingState.targetCanvas.showLoading('Uploading image...');
+            } else {
+                if (this.mixupState.currentImage === 1) {
+                    this.mixupState.canvas1.showLoading('Uploading image...');
+                } else {
+                    this.mixupState.canvas2.showLoading('Uploading image...');
+                }
+            }
+            
             const result = await this.apiClient.uploadImage(file);
             
             if (this.currentMode === 'warping') {
@@ -142,6 +155,17 @@ class App {
                 await this.handleMixupUpload(result);
             }
         } catch (error) {
+            // Hide loading on error
+            if (this.currentMode === 'warping') {
+                this.warpingState.sourceCanvas.hideLoading();
+                this.warpingState.targetCanvas.hideLoading();
+            } else {
+                if (this.mixupState.currentImage === 1) {
+                    this.mixupState.canvas1.hideLoading();
+                } else {
+                    this.mixupState.canvas2.hideLoading();
+                }
+            }
             this.showError(error.message);
         }
     }
@@ -162,8 +186,16 @@ class App {
         await this.waitForCanvasReady(this.warpingState.sourceCanvas);
         await this.waitForCanvasReady(this.warpingState.targetCanvas);
         
+        // Update loading message
+        this.warpingState.sourceCanvas.showLoading('Loading image...');
+        this.warpingState.targetCanvas.showLoading('Loading image...');
+        
         await this.warpingState.sourceCanvas.loadImage(preview_url, width, height);
         await this.warpingState.targetCanvas.loadImage(preview_url, width, height);
+        
+        // Hide loading after image is loaded
+        this.warpingState.sourceCanvas.hideLoading();
+        this.warpingState.targetCanvas.hideLoading();
         
         this.warpingState.sourceSectors.initialize(width, height);
         this.warpingState.targetSectors.initialize(width, height);
@@ -184,14 +216,24 @@ class App {
             this.mixupState.image1Data = { width, height };
             this.mixupState.sectors1.clear();
             await this.waitForCanvasReady(this.mixupState.canvas1);
+            
+            // Update loading message
+            this.mixupState.canvas1.showLoading('Loading image...');
             await this.mixupState.canvas1.loadImage(preview_url, width, height);
+            this.mixupState.canvas1.hideLoading();
+            
             this.mixupState.sectors1.initialize(width, height, MIN_SECTORS);
         } else {
             this.mixupState.image2Id = image_id;
             this.mixupState.image2Data = { width, height };
             this.mixupState.sectors2.clear();
             await this.waitForCanvasReady(this.mixupState.canvas2);
+            
+            // Update loading message
+            this.mixupState.canvas2.showLoading('Loading image...');
             await this.mixupState.canvas2.loadImage(preview_url, width, height);
+            this.mixupState.canvas2.hideLoading();
+            
             this.mixupState.sectors2.initialize(width, height, MIN_SECTORS);
         }
         
@@ -313,83 +355,166 @@ class App {
         let isDragging = false;
         let dragTarget = null;
         
-        canvas.addEventListener('mousedown', (e) => {
+        /**
+         * Get coordinates from mouse or touch event.
+         * @param {Event} e - Mouse or touch event
+         * @returns {{x: number, y: number}|null} - Canvas coordinates
+         */
+        const getEventCoordinates = (e) => {
+            const rect = canvas.getBoundingClientRect();
+            if (e.touches && e.touches.length > 0) {
+                return {
+                    x: e.touches[0].clientX - rect.left,
+                    y: e.touches[0].clientY - rect.top
+                };
+            } else if (e.clientX !== undefined) {
+                return {
+                    x: e.clientX - rect.left,
+                    y: e.clientY - rect.top
+                };
+            }
+            return null;
+        };
+        
+        /**
+         * Calculate distance between two points.
+         * @param {number} x1 - First point X
+         * @param {number} y1 - First point Y
+         * @param {number} x2 - Second point X
+         * @param {number} y2 - Second point Y
+         * @returns {number} - Distance
+         */
+        const calculateDistance = (x1, y1, x2, y2) => {
+            return Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2));
+        };
+        
+        /**
+         * Find closest boundary line to a point.
+         * @param {number} x - Canvas X coordinate
+         * @param {number} y - Canvas Y coordinate
+         * @param {boolean} isTouch - Whether this is a touch event (larger threshold)
+         * @returns {Object|null} - Closest line info or null
+         */
+        const findClosestBoundaryLine = (x, y, isTouch = false) => {
+            const boundaryLines = sectorManager.getBoundaryLines();
+            const sharedCenter = sectorManager.getSharedCenter();
+            
+            if (!boundaryLines || !sharedCenter) {
+                return null;
+            }
+            
+            const baseHitThreshold = isTouch ? CIRCLE_RADIUS.selected + 10 : CIRCLE_RADIUS.selected + 5;
+            const hitThreshold = calculateHitThreshold(baseHitThreshold, canvasController.scale);
+            
+            let closestLine = null;
+            let closestDistance = Infinity;
+            
+            for (let i = 0; i < boundaryLines.length; i++) {
+                const line = boundaryLines[i];
+                const lineCanvas = canvasController.imageToCanvas(line.x, line.y);
+                if (lineCanvas) {
+                    const dist = calculateDistance(x, y, lineCanvas.x, lineCanvas.y);
+                    if (dist < hitThreshold && dist < closestDistance) {
+                        closestDistance = dist;
+                        closestLine = { type: 'boundaryLine', lineIndex: i, distance: dist };
+                    }
+                }
+            }
+            
+            return closestLine;
+        };
+        
+        /**
+         * Check if point is near center.
+         * @param {number} x - Canvas X coordinate
+         * @param {number} y - Canvas Y coordinate
+         * @param {boolean} isTouch - Whether this is a touch event
+         * @returns {boolean} - True if near center
+         */
+        const isNearCenter = (x, y, isTouch = false) => {
+            const sharedCenter = sectorManager.getSharedCenter();
+            if (!sharedCenter) {
+                return false;
+            }
+            
+            const centerCanvas = canvasController.imageToCanvas(sharedCenter.x, sharedCenter.y);
+            if (!centerCanvas) {
+                return false;
+            }
+            
+            const baseThreshold = isTouch ? DRAG_THRESHOLD * 1.5 : DRAG_THRESHOLD;
+            const threshold = calculateAdaptiveThreshold(baseThreshold, canvasController.scale);
+            const dist = calculateDistance(x, y, centerCanvas.x, centerCanvas.y);
+            return dist < threshold;
+        };
+        
+        /**
+         * Handle drag start (mouse/touch down).
+         * @param {Event} e - Mouse or touch event
+         */
+        const handleStart = (e) => {
             if (!canvasController.getImageData()) {
                 return;
             }
             
-            const rect = canvas.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
-            
-            const threshold = calculateAdaptiveThreshold(DRAG_THRESHOLD, canvasController.scale);
-            
-            const sharedCenter = sectorManager.getSharedCenter();
-            if (sharedCenter) {
-                const centerCanvas = canvasController.imageToCanvas(sharedCenter.x, sharedCenter.y);
-                if (centerCanvas) {
-                    const dist = Math.sqrt(
-                        Math.pow(x - centerCanvas.x, 2) + 
-                        Math.pow(y - centerCanvas.y, 2)
-                    );
-                    if (dist < threshold) {
-                        isDragging = true;
-                        dragTarget = { type: 'center' };
-                        canvas.style.cursor = 'grabbing';
-                        e.preventDefault();
-                        return;
-                    }
-                }
+            if (e.touches) {
+                e.preventDefault();
             }
             
-            const boundaryLines = sectorManager.getBoundaryLines();
-            if (boundaryLines && sharedCenter) {
-                const centerCanvas = canvasController.imageToCanvas(sharedCenter.x, sharedCenter.y);
-                if (centerCanvas) {
-                    const hitThreshold = calculateHitThreshold(CIRCLE_RADIUS.selected, canvasController.scale);
-                    
-                    let closestLine = null;
-                    let closestDistance = Infinity;
-                    
-                    for (let i = 0; i < boundaryLines.length; i++) {
-                        const line = boundaryLines[i];
-                        const lineCanvas = canvasController.imageToCanvas(line.x, line.y);
-                        if (lineCanvas) {
-                            const dist = Math.sqrt(
-                                Math.pow(x - lineCanvas.x, 2) + 
-                                Math.pow(y - lineCanvas.y, 2)
-                            );
-                            if (dist < hitThreshold && dist < closestDistance) {
-                                closestDistance = dist;
-                                closestLine = { type: 'boundaryLine', lineIndex: i };
-                            }
-                        }
-                    }
-                    
-                    if (closestLine) {
-                        isDragging = true;
-                        dragTarget = closestLine;
-                        canvas.style.cursor = 'grabbing';
-                        e.preventDefault();
-                        return;
-                    }
+            const coords = getEventCoordinates(e);
+            if (!coords) {
+                return;
+            }
+            
+            const isTouch = !!e.touches;
+            const { x, y } = coords;
+            
+            // Check center first
+            if (isNearCenter(x, y, isTouch)) {
+                isDragging = true;
+                dragTarget = { type: 'center' };
+                canvas.style.cursor = 'grabbing';
+                if (!e.touches) {
+                    e.preventDefault();
+                }
+                return;
+            }
+            
+            // Check boundary lines
+            const closestLine = findClosestBoundaryLine(x, y, isTouch);
+            if (closestLine) {
+                isDragging = true;
+                dragTarget = closestLine;
+                canvas.style.cursor = 'grabbing';
+                if (!e.touches) {
+                    e.preventDefault();
                 }
             }
-        });
+        };
         
-        canvas.addEventListener('mousemove', (e) => {
+        /**
+         * Handle drag move (mouse/touch move).
+         * @param {Event} e - Mouse or touch event
+         */
+        const handleMove = (e) => {
             if (!canvasController.getImageData()) {
                 canvas.style.cursor = 'default';
                 return;
             }
             
-            const rect = canvas.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
+            const coords = getEventCoordinates(e);
+            if (!coords) {
+                return;
+            }
             
-            const threshold = calculateAdaptiveThreshold(DRAG_THRESHOLD, canvasController.scale);
+            const isTouch = !!e.touches;
+            const { x, y } = coords;
             
             if (isDragging && dragTarget) {
+                if (e.touches) {
+                    e.preventDefault();
+                }
+                
                 const imgPoint = canvasController.canvasToImage(x, y);
                 if (imgPoint) {
                     if (dragTarget.type === 'center') {
@@ -404,124 +529,103 @@ class App {
                             dragTarget.lineIndex = result.newIndex;
                         }
                     }
-                    
                     onUpdate();
                 }
             } else {
-                const sharedCenter = sectorManager.getSharedCenter();
-                let hovered = false;
-                
-                if (sharedCenter) {
-                    const centerCanvas = canvasController.imageToCanvas(sharedCenter.x, sharedCenter.y);
-                    if (centerCanvas) {
-                        const dist = Math.sqrt(
-                            Math.pow(x - centerCanvas.x, 2) + 
-                            Math.pow(y - centerCanvas.y, 2)
-                        );
-                        if (dist < threshold) {
-                            canvas.style.cursor = 'grab';
-                            hovered = true;
-                        }
-                    }
-                }
-                
-                if (!hovered) {
-                    const boundaryLines = sectorManager.getBoundaryLines();
-                    const sharedCenter = sectorManager.getSharedCenter();
-                    if (boundaryLines && sharedCenter) {
-                        const hitThreshold = calculateHitThreshold(CIRCLE_RADIUS.selected, canvasController.scale);
-                        
-                        let closestDistance = Infinity;
-                        
-                        for (let i = 0; i < boundaryLines.length; i++) {
-                            const line = boundaryLines[i];
-                            const lineCanvas = canvasController.imageToCanvas(line.x, line.y);
-                            if (lineCanvas) {
-                                const dist = Math.sqrt(
-                                    Math.pow(x - lineCanvas.x, 2) + 
-                                    Math.pow(y - lineCanvas.y, 2)
-                                );
-                                if (dist < hitThreshold && dist < closestDistance) {
-                                    closestDistance = dist;
-                                }
-                            }
-                        }
-                        
-                        canvas.style.cursor = closestDistance < hitThreshold ? 'grab' : 'crosshair';
-                    } else {
-                        canvas.style.cursor = 'crosshair';
-                    }
+                // Update cursor based on hover
+                if (isNearCenter(x, y, isTouch)) {
+                    canvas.style.cursor = 'grab';
+                } else {
+                    const closestLine = findClosestBoundaryLine(x, y, isTouch);
+                    canvas.style.cursor = closestLine ? 'grab' : 'crosshair';
                 }
             }
-        });
+        };
         
-        canvas.addEventListener('mouseup', () => {
+        /**
+         * Handle drag end (mouse/touch up).
+         * @param {Event} e - Mouse or touch event
+         */
+        const handleEnd = (e) => {
+            if (e.touches) {
+                e.preventDefault();
+            }
             isDragging = false;
             dragTarget = null;
             canvas.style.cursor = 'crosshair';
-        });
+        };
         
-        canvas.addEventListener('contextmenu', (e) => {
+        /**
+         * Handle context menu (right-click/long-press) for deleting boundary lines.
+         * @param {Event} e - Context menu event
+         */
+        const handleContextMenu = (e) => {
             e.preventDefault();
             
             if (!canvasController.getImageData()) {
                 return;
             }
             
-            const rect = canvas.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
+            const coords = getEventCoordinates(e);
+            if (!coords) {
+                return;
+            }
             
-            const threshold = calculateAdaptiveThreshold(DRAG_THRESHOLD, canvasController.scale);
+            const isTouch = !!e.touches;
+            const { x, y } = coords;
+            const closestLine = findClosestBoundaryLine(x, y, isTouch);
             
-            const boundaryLines = sectorManager.getBoundaryLines();
-            const sharedCenter = sectorManager.getSharedCenter();
-            if (boundaryLines && sharedCenter) {
-                for (let i = 0; i < boundaryLines.length; i++) {
-                    const line = boundaryLines[i];
-                    const lineCanvas = canvasController.imageToCanvas(line.x, line.y);
-                    if (lineCanvas) {
-                        const dist = Math.sqrt(
-                            Math.pow(x - lineCanvas.x, 2) + 
-                            Math.pow(y - lineCanvas.y, 2)
-                        );
-                        if (dist < threshold) {
-                            const deleted = sectorManager.deleteBoundaryLine(i, MIN_SECTORS);
-                            if (deleted) {
-                                onUpdate();
-                            } else {
-                                this.showError(`Minimum ${MIN_SECTORS} sectors required`);
-                            }
-                            break;
-                        }
-                    }
+            if (closestLine) {
+                const deleted = sectorManager.deleteBoundaryLine(closestLine.lineIndex, MIN_SECTORS);
+                if (deleted) {
+                    onUpdate();
+                } else {
+                    this.showError(`Minimum ${MIN_SECTORS} sectors required`);
                 }
             }
-        });
+        };
+        
+        // Mouse events
+        canvas.addEventListener('mousedown', handleStart);
+        canvas.addEventListener('mousemove', handleMove);
+        canvas.addEventListener('mouseup', handleEnd);
+        canvas.addEventListener('mouseleave', handleEnd);
+        canvas.addEventListener('contextmenu', handleContextMenu);
+        
+        // Touch events (for mobile)
+        canvas.addEventListener('touchstart', handleStart, { passive: false });
+        canvas.addEventListener('touchmove', handleMove, { passive: false });
+        canvas.addEventListener('touchend', handleEnd);
+        canvas.addEventListener('touchcancel', handleEnd);
     }
 
     /**
      * Draw warping canvases.
      */
     drawWarpingCanvases() {
-        this.warpingState.sourceCanvas.draw();
-        const sharedCenter1 = this.warpingState.sourceSectors.getSharedCenter();
-        const boundaryLines1 = this.warpingState.sourceSectors.getBoundaryLines();
-        this.warpingState.sourceCanvas.drawSectors(
-            this.warpingState.sourceSectors.getSectors(),
-            sharedCenter1,
-            boundaryLines1
-        );
+        // Don't draw if loading (loading animation handles drawing)
+        if (!this.warpingState.sourceCanvas.isLoading) {
+            this.warpingState.sourceCanvas.draw();
+            const sharedCenter1 = this.warpingState.sourceSectors.getSharedCenter();
+            const boundaryLines1 = this.warpingState.sourceSectors.getBoundaryLines();
+            this.warpingState.sourceCanvas.drawSectors(
+                this.warpingState.sourceSectors.getSectors(),
+                sharedCenter1,
+                boundaryLines1
+            );
+        }
         
         if (this.warpingState.sourceImageData && this.warpingState.targetCanvas.getImageData()) {
-            this.warpingState.targetCanvas.draw();
-            const sharedCenter2 = this.warpingState.targetSectors.getSharedCenter();
-            const boundaryLines2 = this.warpingState.targetSectors.getBoundaryLines();
-            this.warpingState.targetCanvas.drawSectors(
-                this.warpingState.targetSectors.getSectors(),
-                sharedCenter2,
-                boundaryLines2
-            );
+            if (!this.warpingState.targetCanvas.isLoading) {
+                this.warpingState.targetCanvas.draw();
+                const sharedCenter2 = this.warpingState.targetSectors.getSharedCenter();
+                const boundaryLines2 = this.warpingState.targetSectors.getBoundaryLines();
+                this.warpingState.targetCanvas.drawSectors(
+                    this.warpingState.targetSectors.getSectors(),
+                    sharedCenter2,
+                    boundaryLines2
+                );
+            }
         }
     }
 
@@ -543,6 +647,9 @@ class App {
                 throw new Error(`Please create at least ${MIN_SECTORS} sectors for warping`);
             }
             
+            // Show loading on result canvas
+            this.warpingState.resultCanvas.showLoading('Generating result...');
+            
             const result = await this.apiClient.warpImage(
                 this.warpingState.sourceImageId,
                 sourceSectors,
@@ -550,15 +657,22 @@ class App {
                 this.warpingState.debugMode
             );
             
+            // Update loading message
+            this.warpingState.resultCanvas.showLoading('Loading result...');
             await this.warpingState.resultCanvas.drawResult(
                 result.result_image,
                 this.warpingState.sourceImageData.width,
                 this.warpingState.sourceImageData.height
             );
             
+            // Hide loading after result is displayed
+            this.warpingState.resultCanvas.hideLoading();
+            
             this.warpingState.resultImageDataURL = result.result_image;
             this.updateWarpingButtons();
         } catch (error) {
+            // Hide loading on error
+            this.warpingState.resultCanvas.hideLoading();
             this.showError(error.message);
         }
     }
@@ -738,64 +852,107 @@ class App {
     }
 
     /**
+     * Validate sector index is within bounds.
+     * @param {number|null|undefined} index - Sector index
+     * @param {number} maxLength - Maximum valid index
+     * @returns {boolean} - True if index is valid
+     */
+    isValidSectorIndex(index, maxLength) {
+        return index !== null && index !== undefined && index >= 0 && index < maxLength;
+    }
+    
+    /**
+     * Get mapped source sector indices from sector mapping.
+     * @param {Array} sectorMapping - Sector mapping array
+     * @param {number} sectorsLength - Length of sectors array
+     * @returns {Set} - Set of mapped source indices
+     */
+    getMappedSourceIndices(sectorMapping, sectorsLength) {
+        const mappedIndices = new Set();
+        sectorMapping.forEach(m => {
+            if (this.isValidSectorIndex(m.src_index, sectorsLength)) {
+                mappedIndices.add(m.src_index);
+            }
+        });
+        return mappedIndices;
+    }
+    
+    /**
+     * Get mapped destination sector indices from sector mapping.
+     * @param {Array} sectorMapping - Sector mapping array
+     * @param {number} sectorsLength - Length of sectors array
+     * @returns {Set} - Set of mapped destination indices
+     */
+    getMappedDestinationIndices(sectorMapping, sectorsLength) {
+        const mappedIndices = new Set();
+        sectorMapping.forEach(m => {
+            if (this.isValidSectorIndex(m.dst_index, sectorsLength)) {
+                mappedIndices.add(m.dst_index);
+            }
+        });
+        return mappedIndices;
+    }
+    
+    /**
+     * Build color map from sector mapping.
+     * @param {Array} sectorMapping - Sector mapping array
+     * @param {number} sectors1Length - Length of source sectors array
+     * @param {number} sectors2Length - Length of destination sectors array
+     * @returns {Map} - Map of destination index to source index
+     */
+    buildColorMap(sectorMapping, sectors1Length, sectors2Length) {
+        const colorMap = new Map();
+        sectorMapping.forEach(m => {
+            if (this.isValidSectorIndex(m.dst_index, sectors2Length) && 
+                this.isValidSectorIndex(m.src_index, sectors1Length)) {
+                colorMap.set(m.dst_index, m.src_index);
+            }
+        });
+        return colorMap;
+    }
+    
+    /**
      * Draw mixup canvases with highlighting.
      */
     drawMixupCanvases() {
         const sectorMapping = this.mixupState.sectorMapping;
-        
-        this.mixupState.canvas1.draw();
-        const sharedCenter1 = this.mixupState.sectors1.getSharedCenter();
-        const boundaryLines1 = this.mixupState.sectors1.getBoundaryLines();
         const sectors1 = this.mixupState.sectors1.getSectors();
-        
-        const mappedSrcIndices = new Set();
-        sectorMapping.forEach(m => {
-            if (m.src_index !== null && m.src_index !== undefined && m.src_index >= 0 && m.src_index < sectors1.length) {
-                mappedSrcIndices.add(m.src_index);
-            }
-        });
-        
-        this.mixupState.canvas1.drawSectors(
-            sectors1,
-            sharedCenter1,
-            boundaryLines1,
-            null,
-            null,
-            mappedSrcIndices.size > 0 ? mappedSrcIndices : null,
-            null,
-            this.mixupState.highlightOpacity
-        );
-        
-        this.mixupState.canvas2.draw();
-        const sharedCenter2 = this.mixupState.sectors2.getSharedCenter();
-        const boundaryLines2 = this.mixupState.sectors2.getBoundaryLines();
         const sectors2 = this.mixupState.sectors2.getSectors();
         
-        const mappedDstIndices = new Set();
-        sectorMapping.forEach(m => {
-            if (m.dst_index !== null && m.dst_index !== undefined && m.dst_index >= 0 && m.dst_index < sectors2.length) {
-                mappedDstIndices.add(m.dst_index);
-            }
-        });
+        // Draw canvas 1 (source image)
+        if (!this.mixupState.canvas1.isLoading) {
+            this.mixupState.canvas1.draw();
+            const mappedSrcIndices = this.getMappedSourceIndices(sectorMapping, sectors1.length);
+            
+            this.mixupState.canvas1.drawSectors(
+                sectors1,
+                this.mixupState.sectors1.getSharedCenter(),
+                this.mixupState.sectors1.getBoundaryLines(),
+                null,
+                null,
+                mappedSrcIndices.size > 0 ? mappedSrcIndices : null,
+                null,
+                this.mixupState.highlightOpacity
+            );
+        }
         
-        const colorMap = new Map();
-        sectorMapping.forEach(m => {
-            if (m.dst_index !== null && m.dst_index !== undefined && m.dst_index >= 0 && m.dst_index < sectors2.length &&
-                m.src_index !== null && m.src_index !== undefined && m.src_index >= 0 && m.src_index < sectors1.length) {
-                colorMap.set(m.dst_index, m.src_index);
-            }
-        });
-        
-        this.mixupState.canvas2.drawSectors(
-            sectors2,
-            sharedCenter2,
-            boundaryLines2,
-            null,
-            null,
-            mappedDstIndices.size > 0 ? mappedDstIndices : null,
-            colorMap.size > 0 ? colorMap : null,
-            this.mixupState.highlightOpacity
-        );
+        // Draw canvas 2 (mixin image)
+        if (!this.mixupState.canvas2.isLoading) {
+            this.mixupState.canvas2.draw();
+            const mappedDstIndices = this.getMappedDestinationIndices(sectorMapping, sectors2.length);
+            const colorMap = this.buildColorMap(sectorMapping, sectors1.length, sectors2.length);
+            
+            this.mixupState.canvas2.drawSectors(
+                sectors2,
+                this.mixupState.sectors2.getSharedCenter(),
+                this.mixupState.sectors2.getBoundaryLines(),
+                null,
+                null,
+                mappedDstIndices.size > 0 ? mappedDstIndices : null,
+                colorMap.size > 0 ? colorMap : null,
+                this.mixupState.highlightOpacity
+            );
+        }
     }
 
     /**
@@ -920,6 +1077,9 @@ class App {
                 throw new Error('Please create at least one sector mapping');
             }
             
+            // Show loading on result canvas
+            this.mixupState.resultCanvas.showLoading('Generating result...');
+            
             const result = await this.apiClient.mixupImages(
                 this.mixupState.image1Id,
                 this.mixupState.image2Id,
@@ -932,11 +1092,19 @@ class App {
             
             const resultWidth = this.mixupState.image1Data ? this.mixupState.image1Data.width : null;
             const resultHeight = this.mixupState.image1Data ? this.mixupState.image1Data.height : null;
+            
+            // Update loading message
+            this.mixupState.resultCanvas.showLoading('Loading result...');
             await this.mixupState.resultCanvas.drawResult(result.result_image, resultWidth, resultHeight);
+            
+            // Hide loading after result is displayed
+            this.mixupState.resultCanvas.hideLoading();
             
             this.mixupState.resultImageDataURL = result.result_image;
             this.updateMixupButtons();
         } catch (error) {
+            // Hide loading on error
+            this.mixupState.resultCanvas.hideLoading();
             this.showError(error.message);
         }
     }

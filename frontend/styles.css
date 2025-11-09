@@ -226,6 +226,10 @@ canvas {
     background: var(--color-surface-light);
     margin: 0 auto;
     flex-shrink: 0;
+    touch-action: none;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
 }
 
 .sector-mapping-container {
@@ -236,7 +240,9 @@ canvas {
     box-shadow: var(--shadow-sm);
     display: flex;
     gap: var(--spacing-md);
-    align-items: flex-start;
+    align-items: stretch;
+    width: 100%;
+    box-sizing: border-box;
 }
 
 .sector-mapping-column {
@@ -244,6 +250,7 @@ canvas {
     min-width: 0;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
 }
 
 .sector-mapping-column-middle {
@@ -252,36 +259,47 @@ canvas {
     display: flex;
     flex-direction: column;
     align-items: stretch;
-    align-self: flex-start;
+    overflow: hidden;
 }
 
 .sector-mapping-column h4,
 .sector-mapping-column-middle h4 {
     margin: 0;
     margin-bottom: var(--spacing-sm);
+    padding: 0 0 var(--spacing-sm) 0;
     color: var(--color-text-primary);
     font-size: var(--font-size-md);
+    line-height: 1.4;
     font-family: var(--font-heading);
     font-weight: 600;
     border-bottom: 2px solid var(--color-border);
-    padding-top: 0;
-    padding-bottom: 8px;
-    padding-left: 0;
-    padding-right: 0;
-    height: 44px;
-    min-height: 44px;
-    max-height: 44px;
-    line-height: 36px;
+    box-sizing: border-box;
+    min-height: calc(1.4em + var(--spacing-sm) + 2px);
     display: flex;
     align-items: flex-end;
-    box-sizing: border-box;
-    vertical-align: bottom;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+    width: 100%;
+}
+
+.sector-mapping-column h4 {
+    padding-right: 4px;
+}
+
+.sector-mapping-column-middle h4 {
+    padding-left: 4px;
+    padding-right: 4px;
 }
 
 .sector-mapping {
     display: flex;
     flex-direction: column;
     gap: var(--spacing-sm);
+    width: 100%;
+    overflow: hidden;
+    box-sizing: border-box;
 }
 
 .sector-mapping-arrow {
@@ -289,6 +307,9 @@ canvas {
     flex-direction: column;
     gap: var(--spacing-sm);
     align-items: stretch;
+    width: 100%;
+    overflow: hidden;
+    box-sizing: border-box;
 }
 
 .mapping-item {
@@ -300,6 +321,20 @@ canvas {
     border-radius: var(--radius-sm);
     box-sizing: border-box;
     min-height: 40px;
+    width: 100%;
+    overflow: hidden;
+    word-wrap: break-word;
+}
+
+.mapping-item label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
 
 .mapping-item select {
@@ -309,7 +344,12 @@ canvas {
     font-size: var(--font-size-sm);
     font-family: var(--font-body);
     width: 100%;
+    min-width: 0;
+    max-width: 100%;
     background: var(--color-surface);
+    box-sizing: border-box;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .mapping-item-arrow {
@@ -321,12 +361,17 @@ canvas {
     font-weight: bold;
     color: var(--color-text-primary);
     padding: 8px;
-    margin-bottom: 0;
+    margin: 0;
     min-height: 40px;
+    width: 100%;
     background: var(--color-mixin-box);
     border: 1px solid var(--color-mixin-box-border);
     border-radius: var(--radius-sm);
     box-sizing: border-box;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    word-wrap: normal;
 }
 
 .error-message {
@@ -392,18 +437,40 @@ label {
         flex-wrap: wrap;
     }
     
+    .sector-mapping-container {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    
+    .sector-mapping-column,
+    .sector-mapping-column-middle {
+        width: 100%;
+        min-width: 100%;
+    }
+    
     .sector-mapping-column h4,
     .sector-mapping-column-middle h4 {
-        height: 44px;
-        min-height: 44px;
-        max-height: 44px;
-        line-height: 36px;
-        padding-top: 0;
-        padding-bottom: 8px;
-        margin-top: 0;
+        min-height: calc(1.4em + var(--spacing-sm) + 2px);
+        padding: 0 0 var(--spacing-sm) 0;
         margin-bottom: var(--spacing-sm);
         display: flex;
         align-items: flex-end;
-        vertical-align: bottom;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        width: 100%;
+        max-width: 100%;
+        box-sizing: border-box;
+    }
+    
+    .mapping-item {
+        width: 100%;
+        overflow: hidden;
+    }
+    
+    .mapping-item-arrow {
+        width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
 }

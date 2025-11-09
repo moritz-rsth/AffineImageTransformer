@@ -32,10 +32,10 @@ const MAX_CANVAS_WIDTH = 1200;  // Maximum canvas width in pixels
 const MAX_CANVAS_HEIGHT = 800;  // Maximum canvas height in pixels
 
 // Interaction Configuration
-const DRAG_THRESHOLD = 20;
+const DRAG_THRESHOLD = 5;
 const CIRCLE_RADIUS = {
-    default: 12,
-    hovered: 13,
+    default: 10,
+    hovered: 14,
     selected: 14
 };
 

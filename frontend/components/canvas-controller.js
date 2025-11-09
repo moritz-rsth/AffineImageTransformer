@@ -10,6 +10,9 @@ class CanvasController {
         this.scale = 1;
         this.offsetX = 0;
         this.offsetY = 0;
+        this.isLoading = false;
+        this.loadingAnimationFrame = null;
+        this.loadingRotation = 0;
         
         // Set initial empty canvas size after layout is ready
         // Use multiple attempts to ensure wrapper has proper dimensions
@@ -67,6 +70,9 @@ class CanvasController {
      * Clear canvas and reset to initial empty state.
      */
     clear() {
+        // Stop loading animation if active
+        this.hideLoading();
+        
         this.image = null;
         this.imageData = null;
         this.scale = 1;
@@ -177,6 +183,11 @@ class CanvasController {
      * Does NOT resize the canvas - only redraws content.
      */
     draw() {
+        // Don't draw if loading (loading animation handles drawing)
+        if (this.isLoading) {
+            return;
+        }
+        
         if (!this.image || !this.imageData) return;
         
         // Don't recalculate dimensions here - only redraw
@@ -471,6 +482,92 @@ class CanvasController {
             img.onerror = reject;
             img.src = imageSrc;
         });
+    }
+
+    /**
+     * Show loading indicator on canvas.
+     * @param {string} message - Optional loading message
+     */
+    showLoading(message = 'Loading...') {
+        this.isLoading = true;
+        this.loadingMessage = message;
+        this.loadingRotation = 0;
+        this.animateLoading();
+    }
+
+    /**
+     * Hide loading indicator.
+     */
+    hideLoading() {
+        this.isLoading = false;
+        if (this.loadingAnimationFrame) {
+            cancelAnimationFrame(this.loadingAnimationFrame);
+            this.loadingAnimationFrame = null;
+        }
+        // Redraw canvas without loading indicator
+        if (this.image) {
+            this.draw();
+        }
+    }
+
+    /**
+     * Animate loading spinner - minimalistic design.
+     */
+    animateLoading() {
+        if (!this.isLoading) {
+            return;
+        }
+
+        const ctx = this.ctx;
+        const centerX = this.canvas.width / 2;
+        const centerY = this.canvas.height / 2;
+        const size = Math.min(this.canvas.width, this.canvas.height);
+        const spinnerRadius = size * 0.08;
+        
+        // Clear canvas
+        ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        
+        // Draw semi-transparent overlay
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+        ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+        
+        // Draw existing image if available (faded)
+        if (this.image && this.imageData) {
+            ctx.globalAlpha = 0.4;
+            const scaledWidth = this.imageData.width * this.scale;
+            const scaledHeight = this.imageData.height * this.scale;
+            ctx.drawImage(
+                this.image,
+                this.offsetX,
+                this.offsetY,
+                scaledWidth,
+                scaledHeight
+            );
+            ctx.globalAlpha = 1.0;
+        }
+        
+        // Draw minimalistic spinner - single thin arc
+        ctx.save();
+        ctx.translate(centerX, centerY);
+        ctx.rotate(this.loadingRotation);
+        
+        ctx.strokeStyle = '#666';
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.arc(0, 0, spinnerRadius, 0, Math.PI * 1.5);
+        ctx.stroke();
+        
+        ctx.restore();
+        
+        // Update rotation for next frame
+        this.loadingRotation += 0.08;
+        if (this.loadingRotation > Math.PI * 2) {
+            this.loadingRotation -= Math.PI * 2;
+        }
+        
+        // Schedule next animation frame
+        this.loadingAnimationFrame = requestAnimationFrame(() => this.animateLoading());
     }
 
     /**
