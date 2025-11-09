@@ -7,6 +7,10 @@ class App {
         this.currentMode = 'warping';
         this.mixupCurrentImage = 1;  // Track which mixup image slot is being uploaded
         
+        // Initialize session ID
+        this.sessionId = this.getOrCreateSessionId();
+        this.apiClient.setSessionId(this.sessionId);
+        
         this.warpingState = {
             sourceImageId: null,
             sourceImageData: null,
@@ -43,6 +47,27 @@ class App {
         this.init();
     }
 
+    /**
+     * Get or create session ID from localStorage.
+     * @returns {string} Session ID
+     */
+    getOrCreateSessionId() {
+        const STORAGE_KEY = 'affine_session_id';
+        let sessionId = localStorage.getItem(STORAGE_KEY);
+        
+        if (!sessionId) {
+            // Generate new UUID v4
+            sessionId = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+                const r = Math.random() * 16 | 0;
+                const v = c === 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+            localStorage.setItem(STORAGE_KEY, sessionId);
+        }
+        
+        return sessionId;
+    }
+    
     /**
      * Initialize the application.
      */
@@ -188,7 +213,14 @@ class App {
      * @param {Object} uploadResult - Upload result from API
      */
     async handleImageUpload(uploadResult) {
-        const { image_id, width, height, preview_url } = uploadResult;
+        const { image_id, width, height, preview_url, session_id } = uploadResult;
+        
+        // Update session ID if server returned a new one
+        if (session_id && session_id !== this.sessionId) {
+            this.sessionId = session_id;
+            this.apiClient.setSessionId(session_id);
+            localStorage.setItem('affine_session_id', session_id);
+        }
         
         // Verify the image was stored successfully before updating state
         // Use short retry with small delay since image should be immediately available

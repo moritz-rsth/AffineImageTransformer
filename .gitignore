@@ -62,3 +62,7 @@ logs/
 
 # Railway / Deployment
 .railway/
+
+# Image storage (session-based file storage)
+images/
+!images/.gitkeep
