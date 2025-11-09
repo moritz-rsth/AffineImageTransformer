@@ -2,7 +2,7 @@
 # Includes core library dependencies plus web framework dependencies
 
 # Core image transformation library dependencies
-opencv-python
+opencv-python-headless
 numpy
 matplotlib
 
