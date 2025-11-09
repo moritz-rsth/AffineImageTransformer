@@ -5,6 +5,7 @@ class App {
     constructor() {
         this.apiClient = apiClient;
         this.currentMode = 'warping';
+        this.mixupCurrentImage = 1;  // Track which mixup image slot is being uploaded
         
         this.warpingState = {
             sourceImageId: null,
@@ -33,7 +34,6 @@ class App {
             resultImageDataURL: null,
             selectedSector: null,
             dragging: null,
-            currentImage: 1,
             sectorMapping: [],
             debugMode: false,
             alpha: DEFAULT_ALPHA,
@@ -114,15 +114,24 @@ class App {
         if (!fileInput) {
             return;
         }
+        
         fileInput.addEventListener('change', async (e) => {
             const file = e.target.files[0];
-            if (file) {
-                try {
-                    await this.handleFileUpload(file);
-                    fileInput.value = '';
-                } catch (error) {
-                    this.showError('Error uploading file: ' + error.message);
-                }
+            
+            if (!file) {
+                // User cancelled file selection
+                fileInput.value = '';
+                return;
+            }
+            
+            try {
+                await this.handleFileUpload(file);
+                
+                // Clear file input after successful upload
+                fileInput.value = '';
+            } catch (error) {
+                this.showError('Error uploading file: ' + error.message);
+                fileInput.value = '';
             }
         });
     }
@@ -135,65 +144,83 @@ class App {
         try {
             this.showError(null);
             
-            // Show loading on appropriate canvases
-            if (this.currentMode === 'warping') {
-                this.warpingState.sourceCanvas.showLoading('Uploading image...');
-                this.warpingState.targetCanvas.showLoading('Uploading image...');
-            } else {
-                if (this.mixupState.currentImage === 1) {
-                    this.mixupState.canvas1.showLoading('Uploading image...');
-                } else {
-                    this.mixupState.canvas2.showLoading('Uploading image...');
+            // Validate upload state
+            if (this.currentMode === 'mixup') {
+                if (this.mixupCurrentImage !== 1 && this.mixupCurrentImage !== 2) {
+                    throw new Error('Invalid upload state. Please click the upload button again.');
                 }
             }
+            
+            // Show loading on appropriate canvases
+            const canvases = this.getUploadCanvases();
+            canvases.forEach(canvas => canvas.showLoading('Uploading image...'));
             
             const result = await this.apiClient.uploadImage(file);
             
-            if (this.currentMode === 'warping') {
-                await this.handleWarpingUpload(result);
-            } else {
-                await this.handleMixupUpload(result);
-            }
+            await this.handleImageUpload(result);
         } catch (error) {
             // Hide loading on error
-            if (this.currentMode === 'warping') {
-                this.warpingState.sourceCanvas.hideLoading();
-                this.warpingState.targetCanvas.hideLoading();
-            } else {
-                if (this.mixupState.currentImage === 1) {
-                    this.mixupState.canvas1.hideLoading();
-                } else {
-                    this.mixupState.canvas2.hideLoading();
-                }
-            }
+            const canvases = this.getUploadCanvases();
+            canvases.forEach(canvas => canvas.hideLoading());
             this.showError(error.message);
+        }
+    }
+    
+    /**
+     * Get canvases that should show loading during upload.
+     * @returns {Array<CanvasController>} - Array of canvas controllers
+     */
+    getUploadCanvases() {
+        if (this.currentMode === 'warping') {
+            return [this.warpingState.sourceCanvas, this.warpingState.targetCanvas];
+        } else {
+            if (this.mixupCurrentImage === 1) {
+                return [this.mixupState.canvas1];
+            } else if (this.mixupCurrentImage === 2) {
+                return [this.mixupState.canvas2];
+            }
+            return [];
         }
     }
 
     /**
-     * Handle warping mode image upload.
+     * Unified image upload handler for both warping and mixup modes.
      * @param {Object} uploadResult - Upload result from API
      */
-    async handleWarpingUpload(uploadResult) {
+    async handleImageUpload(uploadResult) {
         const { image_id, width, height, preview_url } = uploadResult;
         
-        this.warpingState.sourceImageId = image_id;
+        if (this.currentMode === 'warping') {
+            await this.handleWarpingImageUpload(image_id, width, height, preview_url);
+        } else {
+            await this.handleMixupImageUpload(image_id, width, height, preview_url);
+        }
+    }
+    
+    /**
+     * Handle warping mode image upload.
+     * @param {string} imageId - Image ID
+     * @param {number} width - Image width
+     * @param {number} height - Image height
+     * @param {string} previewUrl - Preview image URL
+     */
+    async handleWarpingImageUpload(imageId, width, height, previewUrl) {
+        this.warpingState.sourceImageId = imageId;
         this.warpingState.sourceImageData = { width, height };
-        
         this.warpingState.sourceSectors.clear();
         this.warpingState.targetSectors.clear();
         
         await this.waitForCanvasReady(this.warpingState.sourceCanvas);
         await this.waitForCanvasReady(this.warpingState.targetCanvas);
         
-        // Update loading message
         this.warpingState.sourceCanvas.showLoading('Loading image...');
         this.warpingState.targetCanvas.showLoading('Loading image...');
         
-        await this.warpingState.sourceCanvas.loadImage(preview_url, width, height);
-        await this.warpingState.targetCanvas.loadImage(preview_url, width, height);
+        await Promise.all([
+            this.warpingState.sourceCanvas.loadImage(previewUrl, width, height),
+            this.warpingState.targetCanvas.loadImage(previewUrl, width, height)
+        ]);
         
-        // Hide loading after image is loaded
         this.warpingState.sourceCanvas.hideLoading();
         this.warpingState.targetCanvas.hideLoading();
         
@@ -203,39 +230,38 @@ class App {
         this.drawWarpingCanvases();
         this.updateWarpingButtons();
     }
-
+    
     /**
      * Handle mixup mode image upload.
-     * @param {Object} uploadResult - Upload result from API
+     * @param {string} imageId - Image ID
+     * @param {number} width - Image width
+     * @param {number} height - Image height
+     * @param {string} previewUrl - Preview image URL
      */
-    async handleMixupUpload(uploadResult) {
-        const { image_id, width, height, preview_url } = uploadResult;
+    async handleMixupImageUpload(imageId, width, height, previewUrl) {
+        if (this.mixupCurrentImage !== 1 && this.mixupCurrentImage !== 2) {
+            throw new Error('Invalid mixup image slot. Please click the upload button again.');
+        }
         
-        if (this.mixupState.currentImage === 1) {
-            this.mixupState.image1Id = image_id;
+        const canvas = this.mixupCurrentImage === 1 ? this.mixupState.canvas1 : this.mixupState.canvas2;
+        const sectors = this.mixupCurrentImage === 1 ? this.mixupState.sectors1 : this.mixupState.sectors2;
+        
+        if (this.mixupCurrentImage === 1) {
+            this.mixupState.image1Id = imageId;
             this.mixupState.image1Data = { width, height };
             this.mixupState.sectors1.clear();
-            await this.waitForCanvasReady(this.mixupState.canvas1);
-            
-            // Update loading message
-            this.mixupState.canvas1.showLoading('Loading image...');
-            await this.mixupState.canvas1.loadImage(preview_url, width, height);
-            this.mixupState.canvas1.hideLoading();
-            
-            this.mixupState.sectors1.initialize(width, height, MIN_SECTORS);
         } else {
-            this.mixupState.image2Id = image_id;
+            this.mixupState.image2Id = imageId;
             this.mixupState.image2Data = { width, height };
             this.mixupState.sectors2.clear();
-            await this.waitForCanvasReady(this.mixupState.canvas2);
-            
-            // Update loading message
-            this.mixupState.canvas2.showLoading('Loading image...');
-            await this.mixupState.canvas2.loadImage(preview_url, width, height);
-            this.mixupState.canvas2.hideLoading();
-            
-            this.mixupState.sectors2.initialize(width, height, MIN_SECTORS);
         }
+        
+        await this.waitForCanvasReady(canvas);
+        canvas.showLoading('Loading image...');
+        await canvas.loadImage(previewUrl, width, height);
+        canvas.hideLoading();
+        
+        sectors.initialize(width, height, MIN_SECTORS);
         
         this.drawMixupCanvases();
         this.updateMixupButtons();
@@ -265,18 +291,40 @@ class App {
     }
 
     /**
+     * Set up upload button handler.
+     * @param {string} buttonId - Button element ID
+     * @param {number|null} mixupImageSlot - Mixup image slot (1 or 2), null for warping mode
+     */
+    setupUploadButton(buttonId, mixupImageSlot = null) {
+        const uploadBtn = document.getElementById(buttonId);
+        if (!uploadBtn) {
+            return;
+        }
+        
+        uploadBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            // Set mixup image slot if applicable
+            if (mixupImageSlot !== null) {
+                this.mixupCurrentImage = mixupImageSlot;
+            }
+            
+            const fileInput = document.getElementById('file-input');
+            if (fileInput) {
+                fileInput.value = '';
+                setTimeout(() => {
+                    fileInput.click();
+                }, 10);
+            }
+        });
+    }
+    
+    /**
      * Set up warping mode event handlers.
      */
     setupWarpingMode() {
-        const uploadBtn = document.getElementById('warp-upload-btn');
-        if (uploadBtn) {
-            uploadBtn.addEventListener('click', () => {
-                const fileInput = document.getElementById('file-input');
-                if (fileInput) {
-                    fileInput.click();
-                }
-            });
-        }
+        this.setupUploadButton('warp-upload-btn', null);
         
         const addSectorBtn = document.getElementById('warp-add-sector-btn');
         if (addSectorBtn) {
@@ -324,13 +372,7 @@ class App {
             });
         }
         
-        this.setupWarpingCanvasEvents();
-    }
-
-    /**
-     * Set up warping canvas event handlers.
-     */
-    setupWarpingCanvasEvents() {
+        // Setup canvas drag events
         this.setupCanvasDragEvents(
             this.warpingState.sourceCanvas,
             this.warpingState.sourceSectors,
@@ -630,41 +672,56 @@ class App {
     }
 
     /**
-     * Verify that an image exists on the server with retry logic.
+     * Verify that images exist on the server with retry logic.
+     * @param {string|Array<string>} imageIds - Image ID(s) to verify
+     * @param {number} maxRetries - Maximum number of retry attempts
+     * @param {number} retryDelay - Delay between retries in milliseconds
+     * @returns {Promise<boolean|Array<boolean>>} - True/array of booleans if image(s) exist
+     */
+    async verifyImages(imageIds, maxRetries = 10, retryDelay = 2000) {
+        const isArray = Array.isArray(imageIds);
+        const ids = isArray ? imageIds : [imageIds];
+        
+        // Validate all IDs
+        for (const id of ids) {
+            if (!id) {
+                throw new Error('Invalid image ID provided for verification');
+            }
+        }
+        
+        // Verify all images in parallel
+        const verificationPromises = ids.map(id => this.verifySingleImage(id, maxRetries, retryDelay));
+        const results = await Promise.all(verificationPromises);
+        
+        return isArray ? results : results[0];
+    }
+    
+    /**
+     * Verify a single image with retry logic.
      * @param {string} imageId - Image ID to verify
      * @param {number} maxRetries - Maximum number of retry attempts
      * @param {number} retryDelay - Delay between retries in milliseconds
-     * @returns {Promise<boolean>} - True if image exists, false otherwise
+     * @returns {Promise<boolean>} - True if image exists
      */
-    async verifyImageWithRetry(imageId, maxRetries = 10, retryDelay = 2000) {
-        if (!imageId) {
-            console.error('verifyImageWithRetry: imageId is null or undefined');
-            return false;
-        }
-        
+    async verifySingleImage(imageId, maxRetries = 10, retryDelay = 2000) {
         for (let i = 0; i < maxRetries; i++) {
             try {
                 const verification = await this.apiClient.verifyImage(imageId);
                 if (verification && verification.exists) {
-                    console.log(`verifyImageWithRetry: Image ${imageId} verified successfully on attempt ${i + 1}`);
                     return true;
                 }
-                
-                console.log(`verifyImageWithRetry: Image ${imageId} not found on attempt ${i + 1}/${maxRetries}`);
                 
                 // If not found and not last retry, wait before retrying
                 if (i < maxRetries - 1) {
                     await new Promise(resolve => setTimeout(resolve, retryDelay));
                 }
             } catch (error) {
-                console.error(`verifyImageWithRetry: Error on attempt ${i + 1}:`, error);
                 // If error and not last retry, wait before retrying
                 if (i < maxRetries - 1) {
                     await new Promise(resolve => setTimeout(resolve, retryDelay));
                 }
             }
         }
-        console.error(`verifyImageWithRetry: Image ${imageId} not found after ${maxRetries} attempts`);
         return false;
     }
     
@@ -674,6 +731,11 @@ class App {
     async applyWarp() {
         try {
             this.showError(null);
+            
+            // Validate state
+            if (!this.warpingState.sourceImageId) {
+                throw new Error('No source image ID found. Please upload an image first.');
+            }
             
             const sourceSectors = this.warpingState.sourceSectors.exportSectors();
             const targetSectors = this.warpingState.targetSectors.exportSectors();
@@ -686,28 +748,16 @@ class App {
                 throw new Error(`Please create at least ${MIN_SECTORS} sectors for warping`);
             }
             
-            // Show loading on result canvas
+            // Show loading and verify image
             this.warpingState.resultCanvas.showLoading('Verifying image...');
-            
-            // Verify that the source image exists on the server before proceeding
-            if (!this.warpingState.sourceImageId) {
-                throw new Error('No source image ID found. Please upload an image first.');
-            }
-            
-            console.log(`applyWarp: Verifying image ${this.warpingState.sourceImageId} before warp...`);
-            const imageExists = await this.verifyImageWithRetry(this.warpingState.sourceImageId, 10, 2000);
+            const imageExists = await this.verifyImages(this.warpingState.sourceImageId, 10, 2000);
             
             if (!imageExists) {
-                console.error(`applyWarp: Image ${this.warpingState.sourceImageId} verification failed`);
-                throw new Error('Source image not found on server after verification attempts. Please wait a moment and try again, or upload the image again.');
+                throw new Error('Source image not found on server. Please wait a moment and try again, or upload the image again.');
             }
             
-            console.log(`applyWarp: Image ${this.warpingState.sourceImageId} verified successfully`);
-            
-            // Update loading message
+            // Generate result
             this.warpingState.resultCanvas.showLoading('Generating result...');
-            
-            console.log(`applyWarp: Calling warp API for image ${this.warpingState.sourceImageId}...`);
             const result = await this.apiClient.warpImage(
                 this.warpingState.sourceImageId,
                 sourceSectors,
@@ -715,9 +765,7 @@ class App {
                 this.warpingState.debugMode
             );
             
-            console.log('applyWarp: Warp API call successful');
-            
-            // Update loading message
+            // Display result
             this.warpingState.resultCanvas.showLoading('Loading result...');
             await this.warpingState.resultCanvas.drawResult(
                 result.result_image,
@@ -725,23 +773,12 @@ class App {
                 this.warpingState.sourceImageData.height
             );
             
-            // Hide loading after result is displayed
             this.warpingState.resultCanvas.hideLoading();
-            
             this.warpingState.resultImageDataURL = result.result_image;
             this.updateWarpingButtons();
         } catch (error) {
-            // Hide loading on error
             this.warpingState.resultCanvas.hideLoading();
-            
-            // Provide more detailed error message
-            let errorMessage = error.message;
-            if (error.message && error.message.includes('not found')) {
-                errorMessage = `${error.message} Please wait a moment and try again, or upload the image again.`;
-            }
-            
-            console.error('applyWarp error:', error);
-            this.showError(errorMessage);
+            this.showError(error.message);
         }
     }
 
@@ -798,27 +835,8 @@ class App {
      * Set up mixup mode event handlers.
      */
     setupMixupMode() {
-        const upload1Btn = document.getElementById('mixup-upload1-btn');
-        if (upload1Btn) {
-            upload1Btn.addEventListener('click', () => {
-                this.mixupState.currentImage = 1;
-                const fileInput = document.getElementById('file-input');
-                if (fileInput) {
-                    fileInput.click();
-                }
-            });
-        }
-        
-        const upload2Btn = document.getElementById('mixup-upload2-btn');
-        if (upload2Btn) {
-            upload2Btn.addEventListener('click', () => {
-                this.mixupState.currentImage = 2;
-                const fileInput = document.getElementById('file-input');
-                if (fileInput) {
-                    fileInput.click();
-                }
-            });
-        }
+        this.setupUploadButton('mixup-upload1-btn', 1);
+        this.setupUploadButton('mixup-upload2-btn', 2);
         
         const mixupAddSectorBtn = document.getElementById('mixup-add-sector-btn');
         if (mixupAddSectorBtn) {
@@ -893,13 +911,7 @@ class App {
             });
         }
         
-        this.setupMixupCanvasEvents();
-    }
-
-    /**
-     * Set up mixup canvas event handlers.
-     */
-    setupMixupCanvasEvents() {
+        // Setup canvas drag events
         this.setupCanvasDragEvents(
             this.mixupState.canvas1,
             this.mixupState.sectors1,
@@ -1133,6 +1145,14 @@ class App {
         try {
             this.showError(null);
             
+            // Validate state
+            if (!this.mixupState.image1Id) {
+                throw new Error('No source image 1 ID found. Please upload the first image first.');
+            }
+            if (!this.mixupState.image2Id) {
+                throw new Error('No source image 2 ID found. Please upload the second image first.');
+            }
+            
             const sectors1 = this.mixupState.sectors1.exportSectors();
             const sectors2 = this.mixupState.sectors2.exportSectors();
             const sectorMapping = this.mixupState.sectorMapping;
@@ -1145,40 +1165,23 @@ class App {
                 throw new Error('Please create at least one sector mapping');
             }
             
-            // Verify that image IDs exist
-            if (!this.mixupState.image1Id) {
-                throw new Error('No source image 1 ID found. Please upload the first image first.');
-            }
-            if (!this.mixupState.image2Id) {
-                throw new Error('No source image 2 ID found. Please upload the second image first.');
-            }
-            
-            // Show loading on result canvas
+            // Show loading and verify images
             this.mixupState.resultCanvas.showLoading('Verifying images...');
-            
-            console.log(`generateMixup: Verifying images ${this.mixupState.image1Id} and ${this.mixupState.image2Id} before mixup...`);
-            
-            // Verify that both images exist on the server before proceeding
-            const [image1Exists, image2Exists] = await Promise.all([
-                this.verifyImageWithRetry(this.mixupState.image1Id, 10, 2000),
-                this.verifyImageWithRetry(this.mixupState.image2Id, 10, 2000)
-            ]);
+            const [image1Exists, image2Exists] = await this.verifyImages(
+                [this.mixupState.image1Id, this.mixupState.image2Id],
+                10,
+                4000
+            );
             
             if (!image1Exists) {
-                console.error(`generateMixup: Image 1 ${this.mixupState.image1Id} verification failed`);
-                throw new Error('Source image 1 not found on server after verification attempts. Please wait a moment and try again, or upload the image again.');
+                throw new Error('Source image 1 not found on server. Please wait a moment and try again, or upload the image again.');
             }
             if (!image2Exists) {
-                console.error(`generateMixup: Image 2 ${this.mixupState.image2Id} verification failed`);
-                throw new Error('Source image 2 not found on server after verification attempts. Please wait a moment and try again, or upload the image again.');
+                throw new Error('Source image 2 not found on server. Please wait a moment and try again, or upload the image again.');
             }
             
-            console.log(`generateMixup: Both images verified successfully`);
-            
-            // Update loading message
+            // Generate result
             this.mixupState.resultCanvas.showLoading('Generating result...');
-            
-            console.log(`generateMixup: Calling mixup API for images ${this.mixupState.image1Id} and ${this.mixupState.image2Id}...`);
             const result = await this.apiClient.mixupImages(
                 this.mixupState.image1Id,
                 this.mixupState.image2Id,
@@ -1189,32 +1192,19 @@ class App {
                 this.mixupState.alpha
             );
             
-            console.log('generateMixup: Mixup API call successful');
-            
+            // Display result
             const resultWidth = this.mixupState.image1Data ? this.mixupState.image1Data.width : null;
             const resultHeight = this.mixupState.image1Data ? this.mixupState.image1Data.height : null;
             
-            // Update loading message
             this.mixupState.resultCanvas.showLoading('Loading result...');
             await this.mixupState.resultCanvas.drawResult(result.result_image, resultWidth, resultHeight);
             
-            // Hide loading after result is displayed
             this.mixupState.resultCanvas.hideLoading();
-            
             this.mixupState.resultImageDataURL = result.result_image;
             this.updateMixupButtons();
         } catch (error) {
-            // Hide loading on error
             this.mixupState.resultCanvas.hideLoading();
-            
-            // Provide more detailed error message
-            let errorMessage = error.message;
-            if (error.message && error.message.includes('not found')) {
-                errorMessage = `${error.message} Please wait a moment and try again, or upload the image again.`;
-            }
-            
-            console.error('generateMixup error:', error);
-            this.showError(errorMessage);
+            this.showError(error.message);
         }
     }
 

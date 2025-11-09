@@ -140,9 +140,54 @@ def validate_request_data(data: Dict, required_fields: List[str]) -> Optional[Tu
             return (f'{field} is required', HTTP_BAD_REQUEST)
     return None
 
+def validate_image_id(image_id: str, field_name: str = 'image_id') -> Tuple[Optional[np.ndarray], Optional[Tuple[Dict, int]]]:
+    """
+    Validate image ID and retrieve image from store.
+    
+    Returns:
+        Tuple of (image, error_response). If error_response is not None, image is None.
+    """
+    if not image_id or not isinstance(image_id, str):
+        return None, error_response(f'Invalid {field_name}', HTTP_BAD_REQUEST)
+    
+    image = get_image(image_id)
+    if image is None:
+        return None, error_response(f'Image not found (ID: {image_id})', HTTP_NOT_FOUND)
+    
+    height, width = image.shape[:2]
+    if not validate_image_dimensions(width, height):
+        return None, error_response(f'Invalid dimensions for image (ID: {image_id})', HTTP_BAD_REQUEST)
+    
+    return image, None
+
+def validate_sectors(sectors_json: List[Dict], image_width: int, image_height: int, 
+                     field_name: str = 'sectors', min_count: int = 1) -> Tuple[Optional[List[LinearBoundedSector]], Optional[Tuple[Dict, int]]]:
+    """
+    Validate and convert JSON sectors to LinearBoundedSector instances.
+    
+    Returns:
+        Tuple of (sectors_list, error_response). If error_response is not None, sectors_list is None.
+    """
+    if not isinstance(sectors_json, list):
+        return None, error_response(f'Invalid {field_name} format', HTTP_BAD_REQUEST)
+    
+    if len(sectors_json) < min_count:
+        return None, error_response(f'At least {min_count} sector(s) required for {field_name}', HTTP_BAD_REQUEST)
+    
+    try:
+        sectors = [json_to_sector(s, image_width, image_height) for s in sectors_json]
+        return sectors, None
+    except (ValueError, KeyError) as e:
+        return None, error_response(f'Invalid {field_name} data: {str(e)}', HTTP_BAD_REQUEST)
+
 def error_response(message: str, status_code: int) -> Tuple[Dict, int]:
     """Create a standardized error response."""
     return jsonify({'error': message}), status_code
+
+def validation_error(field: str, message: str = None) -> Tuple[Dict, int]:
+    """Create a validation error response."""
+    error_msg = message or f'Invalid {field}'
+    return error_response(error_msg, HTTP_BAD_REQUEST)
 
 @app.route('/api/upload', methods=['POST'])
 def upload_image():
@@ -247,24 +292,24 @@ def warp_image():
         target_sectors_json = data['target_sectors']
         debug_mode = data.get('debug_mode', False)
         
-        if not source_image_id or not isinstance(source_image_id, str):
-            return error_response('Invalid source_image_id', HTTP_BAD_REQUEST)
+        # Validate and retrieve source image
+        source_image, error_resp = validate_image_id(source_image_id, 'source_image_id')
+        if error_resp:
+            return error_resp
         
-        source_image = get_image(source_image_id)
-        if source_image is None:
-            return error_response(f'Source image not found (ID: {source_image_id})', HTTP_NOT_FOUND)
         height, width = source_image.shape[:2]
         
-        if not validate_image_dimensions(width, height):
-            return error_response('Invalid image dimensions', HTTP_BAD_REQUEST)
-        
-        if len(source_sectors_json) == 0:
-            return error_response('At least one sector is required', HTTP_BAD_REQUEST)
+        # Validate sectors
         if len(source_sectors_json) != len(target_sectors_json):
             return error_response('Source and target must have same number of sectors', HTTP_BAD_REQUEST)
         
-        source_sectors = [json_to_sector(s, width, height) for s in source_sectors_json]
-        target_sectors = [json_to_sector(s, width, height) for s in target_sectors_json]
+        source_sectors, error_resp = validate_sectors(source_sectors_json, width, height, 'source_sectors')
+        if error_resp:
+            return error_resp
+        
+        target_sectors, error_resp = validate_sectors(target_sectors_json, width, height, 'target_sectors')
+        if error_resp:
+            return error_resp
         
         warped_image = ImageSectorTransformer.arbitrary_sector_warping(
             src_image=source_image,
@@ -301,39 +346,34 @@ def mixup_images():
         debug_mode = data.get('debug_mode', False)
         alpha = data.get('alpha', DEFAULT_ALPHA)
         
-        if not image1_id or not isinstance(image1_id, str):
-            return error_response('Invalid image1_id', HTTP_BAD_REQUEST)
-        if not image2_id or not isinstance(image2_id, str):
-            return error_response('Invalid image2_id', HTTP_BAD_REQUEST)
+        # Validate alpha parameter
+        if not isinstance(alpha, (int, float)) or alpha < 0 or alpha > 1:
+            return validation_error('alpha', 'alpha must be a number between 0 and 1')
         
-        image1 = get_image(image1_id)
-        if image1 is None:
-            return error_response(f'Image 1 not found (ID: {image1_id})', HTTP_NOT_FOUND)
+        # Validate sector mapping
+        if not isinstance(sector_mapping, list) or len(sector_mapping) == 0:
+            return error_response('At least one sector mapping is required', HTTP_BAD_REQUEST)
         
-        image2 = get_image(image2_id)
-        if image2 is None:
-            return error_response(f'Image 2 not found (ID: {image2_id})', HTTP_NOT_FOUND)
+        # Validate and retrieve images
+        image1, error_resp = validate_image_id(image1_id, 'image1_id')
+        if error_resp:
+            return error_resp
+        
+        image2, error_resp = validate_image_id(image2_id, 'image2_id')
+        if error_resp:
+            return error_resp
+        
         height1, width1 = image1.shape[:2]
         height2, width2 = image2.shape[:2]
         
-        if not validate_image_dimensions(width1, height1):
-            return error_response('Invalid dimensions for image 1', HTTP_BAD_REQUEST)
-        if not validate_image_dimensions(width2, height2):
-            return error_response('Invalid dimensions for image 2', HTTP_BAD_REQUEST)
+        # Validate sectors
+        sectors1, error_resp = validate_sectors(sectors1_json, width1, height1, 'sectors1')
+        if error_resp:
+            return error_resp
         
-        if not isinstance(alpha, (int, float)) or alpha < 0 or alpha > 1:
-            return error_response('alpha must be a number between 0 and 1', HTTP_BAD_REQUEST)
-        
-        if len(sectors1_json) == 0:
-            return error_response('At least one sector is required for image 1', HTTP_BAD_REQUEST)
-        if len(sectors2_json) == 0:
-            return error_response('At least one sector is required for image 2', HTTP_BAD_REQUEST)
-        
-        if len(sector_mapping) == 0:
-            return error_response('At least one sector mapping is required', HTTP_BAD_REQUEST)
-        
-        sectors1 = [json_to_sector(s, width1, height1) for s in sectors1_json]
-        sectors2 = [json_to_sector(s, width2, height2) for s in sectors2_json]
+        sectors2, error_resp = validate_sectors(sectors2_json, width2, height2, 'sectors2')
+        if error_resp:
+            return error_resp
         
         result_image = image1.copy().astype(np.uint8)
         
