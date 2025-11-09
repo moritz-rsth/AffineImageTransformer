@@ -129,6 +129,24 @@ class APIClient {
         const response = await fetch(`${this.baseURL}/health`);
         return await response.json();
     }
+    
+    async getSessionImages() {
+        let url = `${this.baseURL}/api/session/images`;
+        if (this.sessionId) {
+            url += `?session_id=${encodeURIComponent(this.sessionId)}`;
+        }
+        
+        const response = await fetch(url, {
+            headers: this.getHeaders(false)
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Failed to get session images');
+        }
+        
+        return await response.json();
+    }
 }
 
 const apiClient = new APIClient();

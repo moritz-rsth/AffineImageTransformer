@@ -469,7 +469,9 @@ def upload_image():
             'width': width,
             'height': height,
             'preview_url': preview_url,
-            'session_id': session_id
+            'session_id': session_id,
+            'format': original_format,
+            'uploaded_at': current_time
         })
     
     except Exception as e:
@@ -668,6 +670,38 @@ def mixup_images():
     
     except Exception as e:
         return error_response(str(e), HTTP_INTERNAL_SERVER_ERROR)
+
+@app.route('/api/session/images', methods=['GET'])
+def get_session_images():
+    """Get all images in the current session."""
+    try:
+        session_id = get_session_id_from_request()
+        if not session_id:
+            return error_response('Session ID required', HTTP_BAD_REQUEST)
+        
+        if session_id not in session_store:
+            return jsonify({
+                'session_id': session_id,
+                'images': [],
+                'total': 0
+            })
+        
+        session_data = session_store[session_id]
+        image_ids = session_data.get('image_ids', [])
+        
+        images = []
+        for image_id in image_ids:
+            metadata = get_image_metadata(session_id, image_id)
+            if metadata:
+                images.append(metadata)
+        
+        return jsonify({
+            'session_id': session_id,
+            'images': images,
+            'total': len(images)
+        })
+    except Exception as e:
+        return error_response(f'Failed to get session images: {str(e)}', HTTP_INTERNAL_SERVER_ERROR)
 
 @app.route('/health', methods=['GET'])
 def health():

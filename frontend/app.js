@@ -11,6 +11,9 @@ class App {
         this.sessionId = this.getOrCreateSessionId();
         this.apiClient.setSessionId(this.sessionId);
         
+        // Expose getSessionInfo to window for console access
+        window.app = this;
+        
         this.warpingState = {
             sourceImageId: null,
             sourceImageData: null,
@@ -69,6 +72,175 @@ class App {
     }
     
     /**
+     * Save image metadata to localStorage for session tracking.
+     * @param {string} imageId - Image ID
+     * @param {Object} metadata - Image metadata (width, height, format, uploaded_at, preview_url)
+     */
+    saveImageToSession(imageId, metadata) {
+        const STORAGE_KEY = 'affine_session_images';
+        let sessionImages = {};
+        
+        try {
+            const stored = localStorage.getItem(STORAGE_KEY);
+            if (stored) {
+                sessionImages = JSON.parse(stored);
+            }
+        } catch (e) {
+            console.warn('Failed to parse session images from localStorage:', e);
+            sessionImages = {};
+        }
+        
+        if (!sessionImages[this.sessionId]) {
+            sessionImages[this.sessionId] = {};
+        }
+        
+        sessionImages[this.sessionId][imageId] = {
+            width: metadata.width,
+            height: metadata.height,
+            format: metadata.format || 'jpg',
+            uploaded_at: metadata.uploaded_at || Date.now() / 1000,
+            preview_url: metadata.preview_url || null
+        };
+        
+        try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(sessionImages));
+        } catch (e) {
+            console.warn('Failed to save session images to localStorage:', e);
+        }
+    }
+    
+    /**
+     * Get all images for the current session from localStorage.
+     * @returns {Object} Object mapping image IDs to metadata
+     */
+    getSessionImages() {
+        const STORAGE_KEY = 'affine_session_images';
+        
+        try {
+            const stored = localStorage.getItem(STORAGE_KEY);
+            if (!stored) {
+                return {};
+            }
+            
+            const sessionImages = JSON.parse(stored);
+            return sessionImages[this.sessionId] || {};
+        } catch (e) {
+            console.warn('Failed to get session images from localStorage:', e);
+            return {};
+        }
+    }
+    
+    /**
+     * Remove an image from session tracking in localStorage.
+     * @param {string} imageId - Image ID to remove
+     */
+    removeImageFromSession(imageId) {
+        const STORAGE_KEY = 'affine_session_images';
+        
+        try {
+            const stored = localStorage.getItem(STORAGE_KEY);
+            if (!stored) {
+                return;
+            }
+            
+            const sessionImages = JSON.parse(stored);
+            if (sessionImages[this.sessionId] && sessionImages[this.sessionId][imageId]) {
+                delete sessionImages[this.sessionId][imageId];
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(sessionImages));
+            }
+        } catch (e) {
+            console.warn('Failed to remove image from session in localStorage:', e);
+        }
+    }
+    
+    /**
+     * Clear all images for the current session from localStorage.
+     */
+    clearSessionImages() {
+        const STORAGE_KEY = 'affine_session_images';
+        
+        try {
+            const stored = localStorage.getItem(STORAGE_KEY);
+            if (!stored) {
+                return;
+            }
+            
+            const sessionImages = JSON.parse(stored);
+            if (sessionImages[this.sessionId]) {
+                delete sessionImages[this.sessionId];
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(sessionImages));
+            }
+        } catch (e) {
+            console.warn('Failed to clear session images from localStorage:', e);
+        }
+    }
+    
+    /**
+     * Get session info for debugging (console access).
+     * @returns {Object} Session information
+     */
+    getSessionInfo() {
+        const sessionImages = this.getSessionImages();
+        const imageIds = Object.keys(sessionImages);
+        
+        return {
+            session_id: this.sessionId,
+            total_images: imageIds.length,
+            image_ids: imageIds,
+            images: sessionImages
+        };
+    }
+    
+    /**
+     * Sync local session with server session.
+     * @returns {Promise<Object>} Server session data
+     */
+    async syncSessionWithServer() {
+        try {
+            const serverData = await this.apiClient.getSessionImages();
+            const serverImageIds = new Set(serverData.images.map(img => img.image_id));
+            const localImages = this.getSessionImages();
+            const localImageIds = new Set(Object.keys(localImages));
+            
+            // Remove images that are no longer on server
+            for (const imageId of localImageIds) {
+                if (!serverImageIds.has(imageId)) {
+                    this.removeImageFromSession(imageId);
+                }
+            }
+            
+            // Add/update images from server
+            for (const imageData of serverData.images) {
+                this.saveImageToSession(imageData.image_id, {
+                    width: imageData.width,
+                    height: imageData.height,
+                    format: imageData.format,
+                    uploaded_at: imageData.uploaded_at,
+                    preview_url: null // Server doesn't return preview_url
+                });
+            }
+            
+            return serverData;
+        } catch (error) {
+            console.error('Failed to sync session with server:', error);
+            throw error;
+        }
+    }
+    
+    /**
+     * Log session info to console for debugging.
+     */
+    logSessionInfo() {
+        const info = this.getSessionInfo();
+        console.log('=== Session Info ===');
+        console.log('Session ID:', info.session_id);
+        console.log('Total Images:', info.total_images);
+        console.log('Image IDs:', info.image_ids);
+        console.log('Images:', info.images);
+        console.log('===================');
+    }
+
+    /**
      * Initialize the application.
      */
     init() {
@@ -85,6 +257,10 @@ class App {
             this.setupWarpingMode();
             this.setupMixupMode();
             this.setupFileInput();
+            
+            // Log session info on initialization for debugging
+            console.log('App initialized. Session ID:', this.sessionId);
+            this.logSessionInfo();
         } catch (error) {
             this.showError('Error initializing application: ' + error.message);
         }
@@ -196,9 +372,9 @@ class App {
      * @returns {Array<CanvasController>} - Array of canvas controllers
      */
     getUploadCanvases() {
-        if (this.currentMode === 'warping') {
+            if (this.currentMode === 'warping') {
             return [this.warpingState.sourceCanvas, this.warpingState.targetCanvas];
-        } else {
+            } else {
             if (this.mixupCurrentImage === 1) {
                 return [this.mixupState.canvas1];
             } else if (this.mixupCurrentImage === 2) {
@@ -222,6 +398,19 @@ class App {
             localStorage.setItem('affine_session_id', session_id);
         }
         
+        // Extract format from filename if available, otherwise default to jpg
+        const format = uploadResult.format || 'jpg';
+        const uploaded_at = uploadResult.uploaded_at || Date.now() / 1000;
+        
+        // Save image to session tracking in localStorage
+        this.saveImageToSession(image_id, {
+            width: width,
+            height: height,
+            format: format,
+            uploaded_at: uploaded_at,
+            preview_url: preview_url
+        });
+        
         // Verify the image was stored successfully before updating state
         // Use short retry with small delay since image should be immediately available
         // For large files, give the server a moment to complete storage
@@ -231,12 +420,18 @@ class App {
             
             const imageExists = await this.verifyImages(image_id, 5, 300);
             if (!imageExists) {
+                // Remove from session tracking if verification fails
+                this.removeImageFromSession(image_id);
                 throw new Error('Image was uploaded but not found on server. The upload may have failed. Please try uploading again.');
             }
         } catch (error) {
-            // If verification fails, throw error to be handled by caller
+            // If verification fails, remove from session tracking and throw error
+            this.removeImageFromSession(image_id);
             throw new Error(`Failed to verify uploaded image: ${error.message}`);
         }
+        
+        // Log session info to console for debugging
+        this.logSessionInfo();
         
         if (this.currentMode === 'warping') {
             await this.handleWarpingImageUpload(image_id, width, height, preview_url);
@@ -278,7 +473,7 @@ class App {
         this.drawWarpingCanvases();
         this.updateWarpingButtons();
     }
-    
+
     /**
      * Handle mixup mode image upload.
      * @param {string} imageId - Image ID
@@ -349,24 +544,24 @@ class App {
             return;
         }
         
-        uploadBtn.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            
+            uploadBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                
             // Set mixup image slot if applicable
             if (mixupImageSlot !== null) {
                 this.mixupCurrentImage = mixupImageSlot;
             }
-            
-            const fileInput = document.getElementById('file-input');
-            if (fileInput) {
-                fileInput.value = '';
-                setTimeout(() => {
-                    fileInput.click();
-                }, 10);
-            }
-        });
-    }
+                
+                const fileInput = document.getElementById('file-input');
+                if (fileInput) {
+                    fileInput.value = '';
+                    setTimeout(() => {
+                        fileInput.click();
+                    }, 10);
+                }
+            });
+        }
     
     /**
      * Set up warping mode event handlers.
@@ -846,6 +1041,9 @@ class App {
      * Clear warping state.
      */
     clearWarping() {
+        // Note: We don't clear session images from localStorage here
+        // because the images are still on the server and may be used in mixup mode
+        // Only clear the warping state
         this.warpingState.sourceImageId = null;
         this.warpingState.sourceImageData = null;
         this.warpingState.sourceSectors.clear();
@@ -1272,6 +1470,9 @@ class App {
      * Clear mixup state.
      */
     clearMixup() {
+        // Note: We don't clear session images from localStorage here
+        // because the images are still on the server and may be used again
+        // Only clear the mixup state
         this.mixupState.image1Id = null;
         this.mixupState.image1Data = null;
         this.mixupState.image2Id = null;
