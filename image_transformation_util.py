@@ -509,7 +509,7 @@ class ImageSectors:
         Args:
             sample: Sample dictionary containing:
                 - "frame": Image (numpy array)
-                - "points": List of raw points (torch tensors or lists)
+                - "points": List of raw points (lists of [x, y] coordinates)
                 
         Returns:
             ImageSectors instance with calculated sectors
