@@ -391,11 +391,19 @@ class App {
     async handleImageUpload(uploadResult) {
         const { image_id, width, height, preview_url, session_id } = uploadResult;
         
-        // Update session ID if server returned a new one
-        if (session_id && session_id !== this.sessionId) {
-            this.sessionId = session_id;
-            this.apiClient.setSessionId(session_id);
-            localStorage.setItem('affine_session_id', session_id);
+        // Update session ID if server returned a different one
+        // This should only happen if we didn't send a session ID (new session)
+        // or if the server restored our session ID after a restart
+        if (session_id) {
+            if (session_id !== this.sessionId) {
+                // Server returned a different session ID - this shouldn't normally happen
+                // if we're sending our session ID, but we'll update to match server state
+                console.log('Session ID changed from', this.sessionId, 'to', session_id);
+                this.sessionId = session_id;
+                this.apiClient.setSessionId(session_id);
+                localStorage.setItem('affine_session_id', session_id);
+            }
+            // If session_id matches, no need to update - everything is consistent
         }
         
         // Extract format from filename if available, otherwise default to jpg

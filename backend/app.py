@@ -218,15 +218,38 @@ def cleanup_old_sessions(max_age_hours: float = SESSION_CLEANUP_AGE_HOURS):
             del session_store[session_id]
 
 def get_or_create_session(session_id: Optional[str] = None) -> str:
-    """Get existing session or create new one."""
-    if session_id and session_id in session_store:
-        # Update last access time
-        session_store[session_id]['last_access'] = time.time()
-        return session_id
+    """
+    Get existing session or create/restore one.
     
-    # Create new session
-    new_session_id = str(uuid.uuid4())
+    If a session_id is provided:
+    - If it exists in session_store, return it and update last_access
+    - If it doesn't exist, restore it (create session with that ID)
+      This handles cases where server restarted or session was cleaned up
+    
+    If no session_id is provided:
+    - Create a completely new session with a new UUID
+    """
     current_time = time.time()
+    
+    if session_id:
+        if session_id in session_store:
+            # Session exists - update last access time
+            session_store[session_id]['last_access'] = current_time
+            return session_id
+        else:
+            # Session doesn't exist, but we have an ID - restore it
+            # This happens when server restarts or session was cleaned up
+            # We restore the session with the provided ID to maintain consistency
+            session_store[session_id] = {
+                'created_at': current_time,
+                'last_access': current_time,
+                'image_ids': [],
+                'access_times': {}
+            }
+            return session_id
+    
+    # No session ID provided - create completely new session
+    new_session_id = str(uuid.uuid4())
     session_store[new_session_id] = {
         'created_at': current_time,
         'last_access': current_time,
