@@ -2,6 +2,18 @@
 
 A Python library for performing sector-based affine transformations on images. This library provides tools for warping and mixing image sectors using radial triangular transformations.
 
+## Visual Demo
+
+### Warping Mode
+Transform image sectors by defining source and target sector configurations. Drag sector boundaries to create custom warping effects.
+
+![Warping Demo](images/warper_demo.gif)
+
+### Mixup Mode
+Mix sectors between two different images with alpha blending. Create seamless transitions between image regions.
+
+![Mixup Demo](images/mixup_demo.gif)
+
 ## Overview
 
 The `AffineImageTransformer` library implements a novel approach to image transformation using sector-based geometry. It allows you to:
