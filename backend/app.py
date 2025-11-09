@@ -200,6 +200,26 @@ def upload_image():
     except Exception as e:
         return error_response(f'Upload failed: {str(e)}', HTTP_INTERNAL_SERVER_ERROR)
 
+@app.route('/api/verify-image/<image_id>', methods=['GET'])
+def verify_image(image_id: str):
+    """Verify if an image exists in the store."""
+    try:
+        if not image_id or not isinstance(image_id, str):
+            return error_response('Invalid image_id', HTTP_BAD_REQUEST)
+        
+        image = get_image(image_id)
+        if image is None:
+            return jsonify({'exists': False}), 200
+        
+        height, width = image.shape[:2]
+        return jsonify({
+            'exists': True,
+            'width': width,
+            'height': height
+        }), 200
+    except Exception as e:
+        return error_response(f'Verification failed: {str(e)}', HTTP_INTERNAL_SERVER_ERROR)
+
 @app.route('/api/warp', methods=['POST'])
 def warp_image():
     """Warp an image using source and target sectors."""

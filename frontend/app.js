@@ -630,6 +630,35 @@ class App {
     }
 
     /**
+     * Verify that an image exists on the server with retry logic.
+     * @param {string} imageId - Image ID to verify
+     * @param {number} maxRetries - Maximum number of retry attempts
+     * @param {number} retryDelay - Delay between retries in milliseconds
+     * @returns {Promise<boolean>} - True if image exists, false otherwise
+     */
+    async verifyImageWithRetry(imageId, maxRetries = 5, retryDelay = 200) {
+        for (let i = 0; i < maxRetries; i++) {
+            try {
+                const verification = await this.apiClient.verifyImage(imageId);
+                if (verification.exists) {
+                    return true;
+                }
+                
+                // If not found and not last retry, wait before retrying
+                if (i < maxRetries - 1) {
+                    await new Promise(resolve => setTimeout(resolve, retryDelay));
+                }
+            } catch (error) {
+                // If error and not last retry, wait before retrying
+                if (i < maxRetries - 1) {
+                    await new Promise(resolve => setTimeout(resolve, retryDelay));
+                }
+            }
+        }
+        return false;
+    }
+    
+    /**
      * Apply warp transformation.
      */
     async applyWarp() {
@@ -648,6 +677,15 @@ class App {
             }
             
             // Show loading on result canvas
+            this.warpingState.resultCanvas.showLoading('Verifying image...');
+            
+            // Verify that the source image exists on the server before proceeding
+            const imageExists = await this.verifyImageWithRetry(this.warpingState.sourceImageId);
+            if (!imageExists) {
+                throw new Error('Source image not found on server. Please upload the image again.');
+            }
+            
+            // Update loading message
             this.warpingState.resultCanvas.showLoading('Generating result...');
             
             const result = await this.apiClient.warpImage(
@@ -1078,6 +1116,22 @@ class App {
             }
             
             // Show loading on result canvas
+            this.mixupState.resultCanvas.showLoading('Verifying images...');
+            
+            // Verify that both images exist on the server before proceeding
+            const [image1Exists, image2Exists] = await Promise.all([
+                this.verifyImageWithRetry(this.mixupState.image1Id),
+                this.verifyImageWithRetry(this.mixupState.image2Id)
+            ]);
+            
+            if (!image1Exists) {
+                throw new Error('Source image 1 not found on server. Please upload the image again.');
+            }
+            if (!image2Exists) {
+                throw new Error('Source image 2 not found on server. Please upload the image again.');
+            }
+            
+            // Update loading message
             this.mixupState.resultCanvas.showLoading('Generating result...');
             
             const result = await this.apiClient.mixupImages(

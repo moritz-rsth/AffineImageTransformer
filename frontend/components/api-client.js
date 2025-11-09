@@ -68,6 +68,16 @@ class APIClient {
         return await response.json();
     }
 
+    async verifyImage(imageId) {
+        const response = await fetch(`${this.baseURL}/api/verify-image/${imageId}`);
+        
+        if (!response.ok) {
+            return { exists: false };
+        }
+        
+        return await response.json();
+    }
+
     async healthCheck() {
         const response = await fetch(`${this.baseURL}/health`);
         return await response.json();
