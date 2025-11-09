@@ -636,7 +636,7 @@ class App {
      * @param {number} retryDelay - Delay between retries in milliseconds
      * @returns {Promise<boolean>} - True if image exists, false otherwise
      */
-    async verifyImageWithRetry(imageId, maxRetries = 5, retryDelay = 200) {
+    async verifyImageWithRetry(imageId, maxRetries = 10, retryDelay = 2000) {
         for (let i = 0; i < maxRetries; i++) {
             try {
                 const verification = await this.apiClient.verifyImage(imageId);
