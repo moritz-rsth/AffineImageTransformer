@@ -26,6 +26,8 @@ FRONTEND_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 
 image_store: Dict[str, np.ndarray] = {}
 image_store_access_times: Dict[str, float] = {}  # Track last access time for cleanup
+image_reservations: Dict[str, float] = {}  # Track images reserved for operations (image_id -> reservation_time)
+RESERVATION_TIMEOUT = 300.0  # 5 minutes - how long an image can be reserved
 
 def allowed_file(filename: str) -> bool:
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -71,6 +73,7 @@ def cleanup_old_images(exclude_image_id: Optional[str] = None, min_age_seconds: 
     - Only cleanup if there are more than 5 images AND we exceed MAX_IMAGES_STORED
     - Always protect the last 3 most recently accessed images
     - Protect images accessed within min_age_seconds
+    - NEVER cleanup reserved images (images in use for operations)
     - Never cleanup the excluded image (newly uploaded)
     
     Args:
@@ -106,9 +109,19 @@ def cleanup_old_images(exclude_image_id: Optional[str] = None, min_age_seconds: 
     if exclude_image_id:
         protected_images.add(exclude_image_id)
     
+    # Clean up expired reservations
+    expired_reservations = [img_id for img_id, res_time in image_reservations.items() 
+                           if current_time - res_time > RESERVATION_TIMEOUT]
+    for img_id in expired_reservations:
+        del image_reservations[img_id]
+    
+    # NEVER cleanup reserved images (images in use for operations)
+    for reserved_id in image_reservations.keys():
+        protected_images.add(reserved_id)
+    
     # Remove oldest images, but skip protected ones
     for image_id, access_time in sorted_images:
-        # Skip protected images (last 3 most recent + excluded)
+        # Skip protected images (last 3 most recent + excluded + reserved)
         if image_id in protected_images:
             continue
         
@@ -127,12 +140,12 @@ def cleanup_old_images(exclude_image_id: Optional[str] = None, min_age_seconds: 
             break
     
     # If we still have too many images after protecting recent ones,
-    # we need to be more aggressive (but still protect last 3 and excluded)
+    # we need to be more aggressive (but still protect last 3, excluded, and reserved)
     if len(image_store) > MAX_IMAGES_STORED:
         # Only remove very old images (older than 60 seconds) if we're still over limit
         sorted_images = sorted(image_store_access_times.items(), key=lambda x: x[1])
         for image_id, access_time in sorted_images:
-            # Still protect the last 3 and excluded image
+            # Still protect the last 3, excluded, and reserved images
             if image_id in protected_images:
                 continue
             age = current_time - access_time
@@ -342,7 +355,7 @@ def upload_image():
 
 @app.route('/api/verify-image/<image_id>', methods=['GET'])
 def verify_image(image_id: str):
-    """Verify if an image exists in the store."""
+    """Verify if an image exists in the store and update access time."""
     try:
         if not image_id:
             return error_response('Invalid image_id', HTTP_BAD_REQUEST)
@@ -351,8 +364,16 @@ def verify_image(image_id: str):
         if image_id not in image_store:
             return jsonify({'exists': False}), 200
         
-        # Update access time and get image dimensions
-        image_store_access_times[image_id] = time.time()
+        # Update access time to protect from cleanup
+        # This is especially important for mixup operations where images
+        # are verified before being used
+        current_time = time.time()
+        image_store_access_times[image_id] = current_time
+        
+        # Reserve the image to prevent cleanup between verification and operation
+        # This prevents race conditions where cleanup runs between verify and warp/mixup
+        image_reservations[image_id] = current_time
+        
         image = image_store[image_id]
         height, width = image.shape[:2]
         
@@ -384,6 +405,11 @@ def warp_image():
         if error_resp:
             return error_resp
         
+        # Ensure image is reserved (in case it wasn't verified first)
+        current_time = time.time()
+        image_reservations[source_image_id] = current_time
+        image_store_access_times[source_image_id] = current_time
+        
         height, width = source_image.shape[:2]
         
         # Validate sectors
@@ -398,9 +424,6 @@ def warp_image():
         if error_resp:
             return error_resp
         
-        # Update access time again before processing to protect from cleanup during operation
-        image_store_access_times[source_image_id] = time.time()
-        
         warped_image = ImageSectorTransformer.arbitrary_sector_warping(
             src_image=source_image,
             source_sectors=source_sectors,
@@ -410,12 +433,19 @@ def warp_image():
         
         result_base64 = encode_image_base64(warped_image)
         
+        # Release reservation after operation completes
+        if source_image_id in image_reservations:
+            del image_reservations[source_image_id]
+        
         return jsonify({
             'result_image': result_base64,
             'debug_info': {'num_sectors': len(source_sectors), 'debug_mode': debug_mode} if debug_mode else None
         })
     
     except Exception as e:
+        # Release reservation on error
+        if source_image_id in image_reservations:
+            del image_reservations[source_image_id]
         return error_response(str(e), HTTP_INTERNAL_SERVER_ERROR)
 
 @app.route('/api/mixup', methods=['POST'])
@@ -423,6 +453,8 @@ def mixup_images():
     """Mix two images using sector mappings."""
     try:
         data = request.get_json()
+        if data is None:
+            return error_response('Invalid JSON data', HTTP_BAD_REQUEST)
         
         error = validate_request_data(data, ['image1_id', 'image2_id', 'sectors1', 'sectors2', 'sector_mapping'])
         if error:
@@ -444,6 +476,22 @@ def mixup_images():
         if not isinstance(sector_mapping, list) or len(sector_mapping) == 0:
             return error_response('At least one sector mapping is required', HTTP_BAD_REQUEST)
         
+        # Protect both images from cleanup IMMEDIATELY before validation
+        # This prevents race conditions where images are cleaned up between verification and mixup
+        current_time = time.time()
+        
+        # Check if images exist before validation and protect them
+        if image1_id not in image_store:
+            return error_response(f'Image 1 not found (ID: {image1_id}). It may have been removed. Please upload it again.', HTTP_NOT_FOUND)
+        if image2_id not in image_store:
+            return error_response(f'Image 2 not found (ID: {image2_id}). It may have been removed. Please upload it again.', HTTP_NOT_FOUND)
+        
+        # Reserve both images to prevent cleanup (even if they weren't verified first)
+        image_reservations[image1_id] = current_time
+        image_reservations[image2_id] = current_time
+        image_store_access_times[image1_id] = current_time
+        image_store_access_times[image2_id] = current_time
+        
         # Validate and retrieve images
         image1, error_resp = validate_image_id(image1_id, 'image1_id')
         if error_resp:
@@ -464,11 +512,6 @@ def mixup_images():
         sectors2, error_resp = validate_sectors(sectors2_json, width2, height2, 'sectors2')
         if error_resp:
             return error_resp
-        
-        # Update access times for both images before processing to protect from cleanup
-        current_time = time.time()
-        image_store_access_times[image1_id] = current_time
-        image_store_access_times[image2_id] = current_time
         
         result_image = image1.copy().astype(np.uint8)
         
@@ -503,12 +546,23 @@ def mixup_images():
         
         result_base64 = encode_image_base64(result_image)
         
+        # Release reservations after operation completes
+        if image1_id in image_reservations:
+            del image_reservations[image1_id]
+        if image2_id in image_reservations:
+            del image_reservations[image2_id]
+        
         return jsonify({
             'result_image': result_base64,
             'debug_info': {'mixup_mappings': mixup_info, 'debug_mode': debug_mode} if debug_mode else None
         })
     
     except Exception as e:
+        # Release reservations on error
+        if image1_id in image_reservations:
+            del image_reservations[image1_id]
+        if image2_id in image_reservations:
+            del image_reservations[image2_id]
         return error_response(str(e), HTTP_INTERNAL_SERVER_ERROR)
 
 @app.route('/health', methods=['GET'])
